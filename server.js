@@ -247,7 +247,7 @@ async function generateScript(topicInfo) {
         '- Do NOT repeat any of these recent titles: ' + recent.join('; ') + '\n\n' +
         'Return ONLY valid JSON (no markdown):\n' +
         '{\n' +
-        '  "title": "Short catchy title for YouTube (max 60 chars)",\n' +
+        '  "title": "YouTube title — attention-grabbing, use numbers/questions/caps for key words (max 60 chars, e.g. THIS Is Why Your 482 Visa Is Taking So Long)",\n' +
         '  "slides": [\n' +
         '    { "heading": "Bold text (max 5 words)", "body": "1 short sentence (max 15 words)", "icon": "emoji" },\n' +
         '    ... 4-5 slides total (keep it SHORT)\n' +
@@ -262,6 +262,114 @@ async function generateScript(topicInfo) {
   // Strip markdown code blocks if present
   text = text.replace(/^```json?\s*/, '').replace(/\s*```$/, '');
   return JSON.parse(text);
+}
+
+// ===== SUBTITLE GENERATION =====
+function generateSRT(voiceover, totalDuration) {
+  // Split voiceover into chunks of ~8-12 words for subtitle lines
+  var words = (voiceover || '').split(/\s+/);
+  var chunks = [];
+  var chunk = [];
+  for (var i = 0; i < words.length; i++) {
+    chunk.push(words[i]);
+    if (chunk.length >= 8 || i === words.length - 1) {
+      chunks.push(chunk.join(' '));
+      chunk = [];
+    }
+  }
+  if (chunks.length === 0) return '';
+
+  var chunkDuration = totalDuration / chunks.length;
+  var srt = '';
+  for (var j = 0; j < chunks.length; j++) {
+    var startSec = j * chunkDuration;
+    var endSec = (j + 1) * chunkDuration;
+    srt += (j + 1) + '\n';
+    srt += formatSRTTime(startSec) + ' --> ' + formatSRTTime(endSec) + '\n';
+    srt += chunks[j] + '\n\n';
+  }
+  return srt;
+}
+
+function formatSRTTime(sec) {
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = Math.floor(sec % 60);
+  var ms = Math.round((sec % 1) * 1000);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + ',' + String(ms).padStart(3, '0');
+}
+
+// ===== THUMBNAIL GENERATION =====
+function generateThumbnail(title, bgKeyword, isLong) {
+  var W = isLong ? 1280 : 1080;
+  var H = isLong ? 720 : 1920;
+  var canvas = createCanvas(W, H);
+  var ctx = canvas.getContext('2d');
+
+  // Bold gradient background
+  var grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#0a1628');
+  grad.addColorStop(0.4, '#1a2e4a');
+  grad.addColorStop(1, '#0d3b66');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Accent bar at top
+  var accentGrad = ctx.createLinearGradient(0, 0, W, 0);
+  accentGrad.addColorStop(0, '#10b981');
+  accentGrad.addColorStop(1, '#06b6d4');
+  ctx.fillStyle = accentGrad;
+  ctx.fillRect(0, 0, W, 8);
+
+  // Large decorative circle (subtle)
+  ctx.fillStyle = 'rgba(16,185,129,0.08)';
+  ctx.beginPath();
+  ctx.arc(W * 0.75, H * 0.4, isLong ? 250 : 400, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Title text — large, bold, white with word wrap
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  var fontSize = isLong ? 62 : 72;
+  ctx.font = 'bold ' + fontSize + 'px "DejaVu Sans", sans-serif';
+  var titleY = isLong ? H * 0.32 : H * 0.35;
+  wrapText(ctx, title || 'WIDEN Migration', W / 2, titleY, W - 120, fontSize + 14);
+
+  // "WIDEN Migration Experts" badge
+  var badgeY = isLong ? H - 140 : H - 300;
+  ctx.fillStyle = 'rgba(16,185,129,0.2)';
+  var badgeW = 460, badgeH = 56;
+  ctx.beginPath();
+  ctx.roundRect(W / 2 - badgeW / 2, badgeY, badgeW, badgeH, 28);
+  ctx.fill();
+  ctx.fillStyle = '#10b981';
+  ctx.font = 'bold 28px "DejaVu Sans", sans-serif';
+  ctx.fillText('WIDEN Migration Experts', W / 2, badgeY + 38);
+
+  // MARN line
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '22px "DejaVu Sans", sans-serif';
+  ctx.fillText('MARN 1576536 | widen.com.au', W / 2, badgeY + badgeH + 32);
+
+  return canvas.toBuffer('image/png');
+}
+
+async function uploadThumbnail(youtubeVideoId, thumbnailBuffer) {
+  var auth = getOAuth2Client();
+  if (!auth) return;
+  var youtube = google.youtube({ version: 'v3', auth: auth });
+  var thumbPath = path.join(tmpDir, 'thumb_' + Date.now() + '.png');
+  fs.writeFileSync(thumbPath, thumbnailBuffer);
+  try {
+    await youtube.thumbnails.set({
+      videoId: youtubeVideoId,
+      media: { mimeType: 'image/png', body: fs.createReadStream(thumbPath) }
+    });
+    console.log('[Thumbnail] Uploaded for ' + youtubeVideoId);
+  } catch(e) {
+    console.log('[Thumbnail] Upload failed (may need verified channel):', e.message.slice(0, 150));
+  }
+  try { fs.unlinkSync(thumbPath); } catch(e) {}
 }
 
 // ===== VOICE SYNTHESIS (Google Cloud Text-to-Speech) =====
@@ -582,7 +690,7 @@ async function assembleVideoSolid(slides, audioPath, outputPath, slideDuration) 
 }
 
 // ===== YOUTUBE UPLOAD =====
-async function uploadToYouTube(videoPath, title, description, tags) {
+async function uploadToYouTube(videoPath, title, description, tags, isLong) {
   var auth = getOAuth2Client();
   if (!auth) throw new Error('YouTube not authorized. Visit /auth/youtube first.');
   var youtube = google.youtube({ version: 'v3', auth: auth });
@@ -593,7 +701,7 @@ async function uploadToYouTube(videoPath, title, description, tags) {
       requestBody: {
         snippet: {
           title: title.slice(0, 100),
-          description: description + '\n\n#Shorts',
+          description: description + (isLong ? '' : '\n\n#Shorts'),
           tags: tags || [],
           categoryId: '27' // Education
         },
@@ -604,7 +712,8 @@ async function uploadToYouTube(videoPath, title, description, tags) {
       },
       media: { body: fs.createReadStream(videoPath) }
     });
-    return { id: res.data.id, url: 'https://youtube.com/shorts/' + res.data.id };
+    var urlBase = isLong ? 'https://youtube.com/watch?v=' : 'https://youtube.com/shorts/';
+    return { id: res.data.id, url: urlBase + res.data.id };
   } catch(e) {
     var detail = '';
     if (e.response && e.response.data) {
@@ -667,6 +776,31 @@ async function createAndPublishShort(topicOverride) {
     await assembleVideo(script.slides, audioPath, videoPath, bgVideoUrl);
     console.log('[Pipeline] Video assembled: ' + videoPath);
 
+    // Step 3.5: Burn subtitles
+    var srtContent = generateSRT(script.voiceover, audioDuration);
+    if (srtContent) {
+      var srtPath = path.join(tmpDir, 'subs_' + videoId + '.srt');
+      fs.writeFileSync(srtPath, srtContent);
+      var subbedPath = path.join(tmpDir, 'subbed_' + videoId + '.mp4');
+      var subStyle = "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=120";
+      var subCmd = ffmpegPath +
+        ' -i "' + videoPath + '"' +
+        " -vf \"subtitles='" + srtPath.replace(/'/g, "'\\''") + "':force_style='" + subStyle + "'\"" +
+        ' -c:a copy -c:v libx264 -pix_fmt yuv420p -preset fast' +
+        ' -y "' + subbedPath + '"';
+      try {
+        console.log('[Pipeline] Burning subtitles...');
+        execSync(subCmd, { stdio: 'pipe', timeout: 120000 });
+        fs.unlinkSync(videoPath);
+        fs.renameSync(subbedPath, videoPath);
+        console.log('[Pipeline] Subtitles burned in');
+      } catch(subErr) {
+        console.log('[Pipeline] Subtitle burn failed (proceeding without):', (subErr.stderr || subErr.message).toString().slice(-200));
+        try { fs.unlinkSync(subbedPath); } catch(e) {}
+      }
+      try { fs.unlinkSync(srtPath); } catch(e) {}
+    }
+
     // Step 4: Upload
     if (!isYouTubeAuthorized()) {
       db.prepare("UPDATE videos SET status='ready', error='YouTube not authorized — visit /auth/youtube' WHERE id=?").run(videoId);
@@ -691,6 +825,12 @@ async function createAndPublishShort(topicOverride) {
 
     db.prepare("UPDATE videos SET youtube_id=?, youtube_url=?, status='published', published_at=CURRENT_TIMESTAMP WHERE id=?").run(result.id, result.url, videoId);
     console.log('[Pipeline] Published: ' + result.url);
+
+    // Upload thumbnail
+    try {
+      var thumb = generateThumbnail(script.title, script.bgKeyword, false);
+      await uploadThumbnail(result.id, thumb);
+    } catch(e) { console.log('[Pipeline] Thumbnail error:', e.message.slice(0, 100)); }
 
     // Cleanup
     try { fs.unlinkSync(audioPath); } catch(e) {}
@@ -727,7 +867,7 @@ async function generateLongFormScript(topicInfo) {
         '- Do NOT repeat these recent titles: ' + recent.join('; ') + '\n\n' +
         'Return ONLY valid JSON (no markdown):\n' +
         '{\n' +
-        '  "title": "YouTube title (max 70 chars)",\n' +
+        '  "title": "YouTube title — attention-grabbing, use numbers/questions/power words (max 70 chars, e.g. 482 Visa COMPLETE Guide 2026: Everything You Need To Know)",\n' +
         '  "sections": [\n' +
         '    {\n' +
         '      "title": "Section heading (chapter name)",\n' +
@@ -879,6 +1019,32 @@ async function createAndPublishLongForm(topicOverride) {
     await assembleLongFormVideo(script.sections, audioPaths, videoPath);
     console.log('[LongForm] Video assembled: ' + videoPath);
 
+    // Step 3.5: Burn subtitles for long-form
+    var fullNarration = script.sections.map(function(sec) { return sec.narration; }).join(' ');
+    var longSrt = generateSRT(fullNarration, totalDuration);
+    if (longSrt) {
+      var longSrtPath = path.join(tmpDir, 'longsubs_' + videoId + '.srt');
+      fs.writeFileSync(longSrtPath, longSrt);
+      var longSubbedPath = path.join(tmpDir, 'longsubbed_' + videoId + '.mp4');
+      var longSubStyle = "FontName=DejaVu Sans,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=60";
+      var longSubCmd = ffmpegPath +
+        ' -i "' + videoPath + '"' +
+        " -vf \"subtitles='" + longSrtPath.replace(/'/g, "'\\''") + "':force_style='" + longSubStyle + "'\"" +
+        ' -c:a copy -c:v libx264 -pix_fmt yuv420p -preset fast' +
+        ' -y "' + longSubbedPath + '"';
+      try {
+        console.log('[LongForm] Burning subtitles...');
+        execSync(longSubCmd, { stdio: 'pipe', timeout: 300000 });
+        fs.unlinkSync(videoPath);
+        fs.renameSync(longSubbedPath, videoPath);
+        console.log('[LongForm] Subtitles burned in');
+      } catch(subErr) {
+        console.log('[LongForm] Subtitle burn failed (proceeding without):', (subErr.stderr || subErr.message).toString().slice(-200));
+        try { fs.unlinkSync(longSubbedPath); } catch(e) {}
+      }
+      try { fs.unlinkSync(longSrtPath); } catch(e) {}
+    }
+
     // Cleanup audio
     audioPaths.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
 
@@ -913,10 +1079,16 @@ async function createAndPublishLongForm(topicOverride) {
       '#migration #australia #visa #482visa #rpl #migrationagent #sydneymigration';
 
     var tags = ['migration australia', 'visa australia', '482 visa', 'rpl australia', 'migration agent sydney', 'australian visa', 'employer sponsorship', 'widen migration', topicInfo.category];
-    var result = await uploadToYouTube(videoPath, script.title + ' | WIDEN Migration Experts', desc, tags);
+    var result = await uploadToYouTube(videoPath, script.title + ' | WIDEN Migration Experts', desc, tags, true);
 
     db.prepare("UPDATE videos SET youtube_id=?, youtube_url=?, status='published', published_at=CURRENT_TIMESTAMP WHERE id=?").run(result.id, result.url, videoId);
     console.log('[LongForm] Published: ' + result.url);
+
+    // Upload thumbnail
+    try {
+      var thumb = generateThumbnail(script.title, null, true);
+      await uploadThumbnail(result.id, thumb);
+    } catch(e) { console.log('[LongForm] Thumbnail error:', e.message.slice(0, 100)); }
 
     try { fs.unlinkSync(videoPath); } catch(e) {}
     return { id: videoId, youtubeUrl: result.url, title: script.title };
