@@ -407,24 +407,35 @@ async function uploadToYouTube(videoPath, title, description, tags) {
   if (!auth) throw new Error('YouTube not authorized. Visit /auth/youtube first.');
   var youtube = google.youtube({ version: 'v3', auth: auth });
 
-  var res = await youtube.videos.insert({
-    part: ['snippet', 'status'],
-    requestBody: {
-      snippet: {
-        title: title.slice(0, 100),
-        description: description + '\n\n#Shorts',
-        tags: tags || [],
-        categoryId: '27' // Education
+  try {
+    var res = await youtube.videos.insert({
+      part: ['snippet', 'status'],
+      requestBody: {
+        snippet: {
+          title: title.slice(0, 100),
+          description: description + '\n\n#Shorts',
+          tags: tags || [],
+          categoryId: '27' // Education
+        },
+        status: {
+          privacyStatus: 'public',
+          selfDeclaredMadeForKids: false
+        }
       },
-      status: {
-        privacyStatus: 'public',
-        selfDeclaredMadeForKids: false
-      }
-    },
-    media: { body: fs.createReadStream(videoPath) }
-  });
-
-  return { id: res.data.id, url: 'https://youtube.com/shorts/' + res.data.id };
+      media: { body: fs.createReadStream(videoPath) }
+    });
+    return { id: res.data.id, url: 'https://youtube.com/shorts/' + res.data.id };
+  } catch(e) {
+    var detail = '';
+    if (e.response && e.response.data) {
+      detail = JSON.stringify(e.response.data).slice(0, 500);
+      console.log('[YouTube Upload] API error:', detail);
+    } else if (e.errors) {
+      detail = JSON.stringify(e.errors).slice(0, 500);
+      console.log('[YouTube Upload] errors:', detail);
+    }
+    throw new Error('YouTube upload failed: ' + (detail || e.message));
+  }
 }
 
 // ===== MAIN PIPELINE =====
