@@ -450,12 +450,17 @@ async function createAndPublishShort(topicOverride) {
 }
 
 // ===== ADMIN AUTH =====
-var adminTokens = new Set();
+// Persist admin tokens in DB so they survive restarts (volume-backed)
+db.exec("CREATE TABLE IF NOT EXISTS admin_tokens (token TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+// Clean tokens older than 7 days on startup
+try { db.exec("DELETE FROM admin_tokens WHERE created_at < datetime('now', '-7 days')"); } catch(e) {}
 
 function requireAdmin(req, res, next) {
   var auth = req.headers.authorization || '';
   var token = auth.replace('Bearer ', '');
-  if (!token || !adminTokens.has(token)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  var row = db.prepare("SELECT token FROM admin_tokens WHERE token = ?").get(token);
+  if (!row) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
 
@@ -470,7 +475,7 @@ app.get('/admin', function(req, res) { res.sendFile(path.join(__dirname, 'public
 app.post('/api/admin/login', function(req, res) {
   if (req.body.password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
   var token = crypto.randomBytes(32).toString('hex');
-  adminTokens.add(token);
+  db.prepare("INSERT INTO admin_tokens (token) VALUES (?)").run(token);
   res.json({ token: token });
 });
 
