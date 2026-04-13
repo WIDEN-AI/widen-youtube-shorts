@@ -461,6 +461,8 @@ function requireAdmin(req, res, next) {
 
 // ===== API ROUTES =====
 app.use(express.static('public'));
+app.get('/', function(req, res) { res.redirect('/admin'); });
+app.get('/api/health', function(req, res) { res.json({ status: 'ok', service: 'widen-youtube-shorts', youtube: isYouTubeAuthorized() }); });
 app.use(express.json());
 
 app.get('/admin', function(req, res) { res.sendFile(path.join(__dirname, 'public', 'admin.html')); });
