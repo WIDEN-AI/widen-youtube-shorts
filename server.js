@@ -137,7 +137,7 @@ app.get('/auth/youtube', function(req, res) {
   var url = client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
-    scope: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
+    scope: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube', 'https://www.googleapis.com/auth/cloud-platform']
   });
   res.redirect(url);
 });
