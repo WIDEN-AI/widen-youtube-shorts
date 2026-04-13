@@ -231,7 +231,8 @@ async function generateScript(topicInfo) {
         '    { "heading": "Bold text (max 6 words)", "body": "1-2 short sentences (max 25 words)", "icon": "emoji" },\n' +
         '    ... 5-7 slides total\n' +
         '  ],\n' +
-        '  "voiceover": "Full narration script as one continuous paragraph (45-55 seconds when spoken)"\n' +
+        '  "voiceover": "Full narration script as one continuous paragraph (45-55 seconds when spoken)",\n' +
+        '  "bgKeyword": "2-3 word Pexels stock video search term (e.g. Australia city, office work, Sydney skyline, airport travel)"\n' +
         '}'
     }]
   });
@@ -287,7 +288,60 @@ async function generateAudio(text, outputPath) {
   return outputPath;
 }
 
-// ===== SLIDE RENDERING (node-canvas) =====
+// ===== PEXELS STOCK VIDEO BACKGROUND =====
+var https = require('https');
+var http = require('http');
+
+function downloadFile(url, destPath) {
+  return new Promise(function(resolve, reject) {
+    var proto = url.startsWith('https') ? https : http;
+    function doGet(u) {
+      proto.get(u, function(res) {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          var loc = res.headers.location;
+          if (loc.startsWith('https')) proto = https;
+          else proto = http;
+          doGet(loc);
+          return;
+        }
+        if (res.statusCode !== 200) { reject(new Error('Download HTTP ' + res.statusCode)); return; }
+        var ws = fs.createWriteStream(destPath);
+        res.pipe(ws);
+        ws.on('finish', function() { ws.close(); resolve(destPath); });
+        ws.on('error', reject);
+      }).on('error', reject);
+    }
+    doGet(url);
+  });
+}
+
+async function fetchPexelsVideo(keyword) {
+  if (!process.env.PEXELS_API_KEY) { console.log('[Pexels] No API key'); return null; }
+  try {
+    var q = encodeURIComponent(keyword || 'Australia city');
+    var url = 'https://api.pexels.com/videos/search?query=' + q + '&orientation=portrait&size=medium&per_page=5';
+    var r = await fetch(url, { headers: { Authorization: process.env.PEXELS_API_KEY } });
+    if (!r.ok) { console.log('[Pexels] HTTP ' + r.status); return null; }
+    var data = await r.json();
+    if (!data.videos || !data.videos.length) { console.log('[Pexels] No results for "' + keyword + '"'); return null; }
+    // Pick a video file — prefer HD quality, portrait
+    var video = data.videos[0];
+    var files = video.video_files || [];
+    // Sort: prefer height >= 1920, then largest
+    files.sort(function(a, b) {
+      var aFit = (a.height || 0) >= 1920 ? 1 : 0;
+      var bFit = (b.height || 0) >= 1920 ? 1 : 0;
+      if (aFit !== bFit) return bFit - aFit;
+      return (b.height || 0) - (a.height || 0);
+    });
+    var pick = files[0];
+    if (!pick || !pick.link) { console.log('[Pexels] No video file link'); return null; }
+    console.log('[Pexels] Found: ' + (pick.width || '?') + 'x' + (pick.height || '?') + ' from "' + keyword + '"');
+    return pick.link;
+  } catch(e) { console.log('[Pexels] Error:', e.message); return null; }
+}
+
+// ===== SLIDE RENDERING (node-canvas fallback) =====
 function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   var words = (text || '').split(' ');
   var line = '';
@@ -378,13 +432,102 @@ function getAudioDuration(audioPath) {
   });
 }
 
-async function assembleVideo(slides, audioPath, outputPath) {
+// Escape text for FFmpeg drawtext filter
+function dtEsc(s) {
+  return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:').replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/%/g, '%%');
+}
+
+async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
   var duration = await getAudioDuration(audioPath);
   var slideDuration = duration / slides.length;
-
-  // Write slide PNGs
-  var slideFiles = [];
   var ts = Date.now();
+  var tempFiles = [];
+
+  // Try Pexels video background
+  var bgPath = null;
+  if (bgVideoUrl) {
+    try {
+      bgPath = path.join(tmpDir, 'bg_' + ts + '.mp4');
+      console.log('[Video] Downloading Pexels background...');
+      await downloadFile(bgVideoUrl, bgPath);
+      tempFiles.push(bgPath);
+      console.log('[Video] Background downloaded: ' + (fs.statSync(bgPath).size / 1024).toFixed(0) + ' KB');
+    } catch(e) {
+      console.log('[Video] Pexels download failed:', e.message, '— using solid background');
+      bgPath = null;
+    }
+  }
+
+  function cleanup() {
+    tempFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
+  }
+
+  if (bgPath) {
+    // ===== PEXELS VIDEO BACKGROUND + DRAWTEXT =====
+    return new Promise(function(resolve, reject) {
+      // Build a complex filter:
+      // 1. Loop bg video to match audio duration, scale to 1080x1920, crop center
+      // 2. Add dark overlay (50% black)
+      // 3. For each slide, show drawtext during its time window
+
+      var drawtexts = [];
+      for (var i = 0; i < slides.length; i++) {
+        var start = (i * slideDuration).toFixed(2);
+        var end = ((i + 1) * slideDuration).toFixed(2);
+        var en = "enable='between(t," + start + ',' + end + ")'";
+
+        // Slide number
+        drawtexts.push("drawtext=text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
+
+        // Heading
+        var headText = dtEsc(slides[i].heading || '');
+        drawtexts.push("drawtext=text='" + headText + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
+
+        // Body
+        var bodyText = dtEsc(slides[i].body || '');
+        drawtexts.push("drawtext=text='" + bodyText + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
+      }
+
+      // Bottom branding (always visible)
+      drawtexts.push("drawtext=text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
+      drawtexts.push("drawtext=text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
+
+      // Dark overlay: colorchannelmixer dims the video
+      var filterChain = 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,loop=-1:size=900,setpts=N/FRAME_RATE/TB,colorchannelmixer=rr=0.4:gg=0.4:bb=0.4,' + drawtexts.join(',');
+
+      ffmpeg()
+        .input(bgPath)
+        .input(audioPath)
+        .complexFilter(filterChain, 'v')
+        .outputOptions([
+          '-map', '[v]', '-map', '1:a',
+          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast',
+          '-c:a', 'aac', '-b:a', '128k',
+          '-shortest', '-movflags', '+faststart',
+          '-t', String(duration)
+        ])
+        .output(outputPath)
+        .on('end', function() { cleanup(); resolve(outputPath); })
+        .on('error', function(err) {
+          console.log('[Video] Pexels FFmpeg failed:', err.message, '— retrying with solid bg');
+          cleanup();
+          assembleVideoSolid(slides, audioPath, outputPath, slideDuration).then(resolve).catch(reject);
+        })
+        .run();
+    });
+  } else {
+    return assembleVideoSolid(slides, audioPath, outputPath, slideDuration);
+  }
+}
+
+// Fallback: canvas-rendered PNGs on solid background
+async function assembleVideoSolid(slides, audioPath, outputPath, slideDuration) {
+  if (!slideDuration) {
+    var duration = await getAudioDuration(audioPath);
+    slideDuration = duration / slides.length;
+  }
+  var ts = Date.now();
+  var slideFiles = [];
   for (var i = 0; i < slides.length; i++) {
     var png = renderSlide(slides[i], i, slides.length);
     var fp = path.join(tmpDir, 'slide_' + ts + '_' + i + '.png');
@@ -392,10 +535,9 @@ async function assembleVideo(slides, audioPath, outputPath) {
     slideFiles.push(fp);
   }
 
-  // FFmpeg concat demuxer file
   var concatPath = path.join(tmpDir, 'concat_' + ts + '.txt');
   var concatLines = slideFiles.map(function(f) { return "file '" + f + "'\nduration " + slideDuration; }).join('\n');
-  concatLines += "\nfile '" + slideFiles[slideFiles.length - 1] + "'"; // FFmpeg needs last file repeated
+  concatLines += "\nfile '" + slideFiles[slideFiles.length - 1] + "'";
   fs.writeFileSync(concatPath, concatLines);
 
   return new Promise(function(resolve, reject) {
@@ -410,7 +552,6 @@ async function assembleVideo(slides, audioPath, outputPath) {
       ])
       .output(outputPath)
       .on('end', function() {
-        // Cleanup temp files
         slideFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
         try { fs.unlinkSync(concatPath); } catch(e) {}
         resolve(outputPath);
@@ -489,10 +630,16 @@ async function createAndPublishShort(topicOverride) {
 
     db.prepare("UPDATE videos SET duration_seconds=? WHERE id=?").run(audioDuration, videoId);
 
+    // Step 2.5: Pexels background
+    var bgVideoUrl = null;
+    if (script.bgKeyword) {
+      bgVideoUrl = await fetchPexelsVideo(script.bgKeyword);
+    }
+
     // Step 3: Video
     console.log('[Pipeline] Assembling video...');
     var videoPath = path.join(tmpDir, 'video_' + videoId + '.mp4');
-    await assembleVideo(script.slides, audioPath, videoPath);
+    await assembleVideo(script.slides, audioPath, videoPath, bgVideoUrl);
     console.log('[Pipeline] Video assembled: ' + videoPath);
 
     // Step 4: Upload
