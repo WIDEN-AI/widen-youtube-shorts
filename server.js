@@ -86,6 +86,29 @@ function pickNextTopic() {
 }
 
 // ===== YOUTUBE OAUTH2 =====
+// Token resolution order: DB settings → GOOGLE_TOKEN_JSON env → YOUTUBE_REFRESH_TOKEN env (minimal rebuild)
+function loadTokens() {
+  // 1. Try full token from DB
+  var row = db.prepare("SELECT value FROM settings WHERE key='google_token'").get();
+  if (row && row.value) { try { return JSON.parse(row.value); } catch(e) {} }
+  // 2. Try full token from env
+  if (process.env.GOOGLE_TOKEN_JSON) { try { return JSON.parse(process.env.GOOGLE_TOKEN_JSON); } catch(e) {} }
+  // 3. Rebuild from refresh token env var (survives redeploys without a volume)
+  if (process.env.YOUTUBE_REFRESH_TOKEN) {
+    return { refresh_token: process.env.YOUTUBE_REFRESH_TOKEN };
+  }
+  return null;
+}
+
+function saveTokens(tokens) {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_token', ?)").run(JSON.stringify(tokens));
+  // Log refresh token so the user can copy it into Railway env vars as a backup
+  if (tokens.refresh_token) {
+    console.log('[YouTube] Refresh token available. Set YOUTUBE_REFRESH_TOKEN in Railway env vars to survive redeploys without a volume:');
+    console.log('[YouTube] YOUTUBE_REFRESH_TOKEN=' + tokens.refresh_token);
+  }
+}
+
 function getOAuth2Client() {
   var creds;
   try { creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON); } catch(e) { return null; }
@@ -93,23 +116,19 @@ function getOAuth2Client() {
   var baseUrl = process.env.BASE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'http://localhost:' + PORT);
   var client = new google.auth.OAuth2(conf.client_id, conf.client_secret, baseUrl + '/oauth2callback');
 
-  var row = db.prepare("SELECT value FROM settings WHERE key='google_token'").get();
-  var tokens = null;
-  if (row) { try { tokens = JSON.parse(row.value); } catch(e) {} }
-  if (!tokens && process.env.GOOGLE_TOKEN_JSON) { try { tokens = JSON.parse(process.env.GOOGLE_TOKEN_JSON); } catch(e) {} }
+  var tokens = loadTokens();
   if (tokens) client.setCredentials(tokens);
 
   client.on('tokens', function(t) {
     var merged = Object.assign({}, tokens || {}, t);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_token', ?)").run(JSON.stringify(merged));
+    saveTokens(merged);
     tokens = merged;
   });
   return client;
 }
 
 function isYouTubeAuthorized() {
-  var row = db.prepare("SELECT value FROM settings WHERE key='google_token'").get();
-  return !!(row && row.value) || !!process.env.GOOGLE_TOKEN_JSON;
+  return !!loadTokens();
 }
 
 app.get('/auth/youtube', function(req, res) {
@@ -127,9 +146,12 @@ app.get('/oauth2callback', async function(req, res) {
   try {
     var client = getOAuth2Client();
     var { tokens } = await client.getToken(req.query.code);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_token', ?)").run(JSON.stringify(tokens));
-    console.log('[YouTube] Authorized successfully. Refresh token stored.');
-    res.send('<html><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;"><h1 style="color:#10b981;">YouTube Authorized!</h1><p>You can close this window and return to the admin dashboard.</p><a href="/admin" style="color:#818cf8;">Go to Admin</a></div></body></html>');
+    saveTokens(tokens);
+    console.log('[YouTube] Authorized successfully.');
+    var refreshNote = tokens.refresh_token
+      ? '<p style="margin-top:16px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:12px;font-size:0.85em;text-align:left;"><strong>Important:</strong> Copy this refresh token into Railway env var <code>YOUTUBE_REFRESH_TOKEN</code> so it survives redeploys:<br><code style="word-break:break-all;color:#10b981;">' + tokens.refresh_token + '</code></p>'
+      : '';
+    res.send('<html><body style="font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;"><div style="text-align:center;max-width:600px;"><h1 style="color:#10b981;">YouTube Authorized!</h1><p>You can close this window and return to the admin dashboard.</p>' + refreshNote + '<p style="margin-top:16px;"><a href="/admin" style="color:#818cf8;">Go to Admin</a></p></div></body></html>');
   } catch(e) {
     console.log('[YouTube OAuth] Error:', e.message);
     res.status(500).send('OAuth error: ' + e.message);
