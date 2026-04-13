@@ -73,8 +73,9 @@ input.topic-input{padding:10px 14px;background:rgba(15,23,42,0.6);border:1px sol
 
     <div class="actions">
       <input class="topic-input" id="customTopic" placeholder="Custom topic (optional)">
-      <button class="btn btn-green" id="genBtn" onclick="generate()">Generate Now</button>
-      <button class="btn btn-indigo" onclick="preview()">Preview Script</button>
+      <button class="btn btn-green" id="genBtn" onclick="generate()">Generate Short</button>
+      <button class="btn btn-indigo" id="genLongBtn" onclick="generateLong()">Generate Long Video</button>
+      <button class="btn btn-gray" onclick="preview()">Preview Script</button>
       <button class="btn btn-orange" id="pauseBtn" onclick="togglePause()">Pause</button>
       <a href="/auth/youtube" class="btn btn-gray" id="authBtn">Connect YouTube</a>
     </div>
@@ -87,7 +88,7 @@ input.topic-input{padding:10px 14px;background:rgba(15,23,42,0.6);border:1px sol
     <h2 style="font-size:1.1rem;color:#fff;margin-bottom:8px;">Generated Videos</h2>
     <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>Date</th><th>Title</th><th>Topic</th><th>Duration</th><th>Status</th><th>Link</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Type</th><th>Title</th><th>Topic</th><th>Duration</th><th>Status</th><th>Link</th><th></th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -169,9 +170,10 @@ function fetchVideos() {
     document.getElementById('emptyMsg').style.display = 'none';
     tbody.innerHTML = videos.map(function(v) {
       var date = v.created_at ? new Date(v.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }) : '—';
-      var dur = v.duration_seconds ? v.duration_seconds.toFixed(0) + 's' : '—';
+      var dur = v.duration_seconds ? (v.duration_seconds >= 60 ? (v.duration_seconds / 60).toFixed(1) + 'm' : v.duration_seconds.toFixed(0) + 's') : '—';
+      var vtype = v.video_type === 'long' ? '<span style="color:#818cf8;font-weight:600;">Long</span>' : '<span style="color:#10b981;">Short</span>';
       var link = v.youtube_url ? '<a href="' + v.youtube_url + '" target="_blank">Watch</a>' : '—';
-      return '<tr><td>' + date + '</td><td>' + (v.title || '—') + '</td><td style="color:#94a3b8;font-size:0.82em;">' + (v.topic || '—') + '</td><td>' + dur + '</td><td><span class="badge badge-' + v.status + '">' + v.status + '</span>' + (v.error ? '<br><span style="color:#f87171;font-size:0.75em;">' + v.error.slice(0, 60) + '</span>' : '') + '</td><td>' + link + '</td><td><button class="btn btn-red" style="padding:4px 10px;font-size:0.75em;" onclick="deleteVideo(' + v.id + ')">X</button></td></tr>';
+      return '<tr><td>' + date + '</td><td>' + vtype + '</td><td>' + (v.title || '—') + '</td><td style="color:#94a3b8;font-size:0.82em;">' + (v.topic || '—') + '</td><td>' + dur + '</td><td><span class="badge badge-' + v.status + '">' + v.status + '</span>' + (v.error ? '<br><span style="color:#f87171;font-size:0.75em;">' + v.error.slice(0, 60) + '</span>' : '') + '</td><td>' + link + '</td><td><button class="btn btn-red" style="padding:4px 10px;font-size:0.75em;" onclick="deleteVideo(' + v.id + ')">X</button></td></tr>';
     }).join('');
   });
 }
@@ -202,6 +204,18 @@ function preview() {
       alert('Preview failed: ' + (d.error || 'Unknown'));
     }
   });
+}
+
+function generateLong() {
+  var btn = document.getElementById('genLongBtn');
+  btn.disabled = true; btn.textContent = 'Generating (5-10 min)...';
+  var topic = document.getElementById('customTopic').value.trim() || undefined;
+  api('/api/generate-long', { method: 'POST', body: JSON.stringify({ topic: topic }) }).then(function(d) {
+    btn.disabled = false; btn.textContent = 'Generate Long Video';
+    if (d.success) { alert('Long video created! ' + (d.result.youtubeUrl || d.result.status)); }
+    else { alert('Failed: ' + (d.error || 'Unknown error')); }
+    fetchStatus(); fetchVideos();
+  }).catch(function() { btn.disabled = false; btn.textContent = 'Generate Long Video'; });
 }
 
 function togglePause() { api('/api/pause', { method: 'POST' }).then(fetchStatus); }

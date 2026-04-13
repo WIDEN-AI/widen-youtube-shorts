@@ -61,6 +61,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS videos (
   title TEXT NOT NULL,
   topic TEXT,
   category TEXT,
+  video_type TEXT DEFAULT 'short',
   script_json TEXT,
   voiceover TEXT,
   duration_seconds REAL,
@@ -71,6 +72,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS videos (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   published_at DATETIME
 )`);
+try { db.exec("ALTER TABLE videos ADD COLUMN video_type TEXT DEFAULT 'short'"); } catch(e) {}
 
 db.exec(`CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -92,6 +94,38 @@ var CATEGORIES = [
   { name: 'Skills assessment tips', topics: ['Skills assessment for Australian visas', 'TRA skills assessment for trades', 'ACS skills assessment for IT', 'Engineers Australia CDR tips', 'ANMAC assessment for nurses', 'Skills assessment processing times', 'Positive skills assessment benefits'] },
   { name: 'Migration agent Q&A', topics: ['Do you need a migration agent', 'How to choose a migration agent', 'What is a MARN number', 'Migration agent vs immigration lawyer', 'Red flags with migration agents', 'Free consultation what to expect', 'MARA complaints process'] }
 ];
+
+// ===== LONG-FORM TOPICS (5-10 min deep-dive videos) =====
+var LONG_FORM_TOPICS = [
+  { category: 'Visa deep-dive', topic: '482 TSS Visa Complete Guide 2026 — Eligibility, Costs, Processing Times, Employer Obligations and Pathway to PR' },
+  { category: 'Visa deep-dive', topic: '186 Employer Nomination Scheme — Direct Entry vs Transition Stream, Requirements, Costs and Timeline' },
+  { category: 'Visa deep-dive', topic: '494 Skilled Employer Sponsored Regional Visa — Who Qualifies, Regional Areas, Pathway to 191 PR' },
+  { category: 'Visa deep-dive', topic: '407 Training Visa Explained — Sponsorship, Training Plans, Sequential Lodgement Rules and Common Mistakes' },
+  { category: 'Visa deep-dive', topic: 'Partner Visa Australia — Subclass 820/801 Onshore vs 309/100 Offshore, Evidence, Costs and Processing' },
+  { category: 'Visa deep-dive', topic: 'Parent Visa Australia — 103 vs 143 vs 804 vs 864, Costs, Wait Times and Assurance of Support' },
+  { category: 'Visa deep-dive', topic: 'Student Visa to PR Pathway — Subclass 500 to Skilled Visa, Study Options and Transition Strategy' },
+  { category: 'Skills & RPL', topic: 'Skills Assessment Complete Guide — TRA, ACS, Engineers Australia, ANMAC and All Assessing Authorities' },
+  { category: 'Skills & RPL', topic: 'RPL Recognition of Prior Learning — How It Works, Evidence Needed, Costs, Qualifications and Visa Benefits' },
+  { category: 'Skills & RPL', topic: 'CDR Writing for Engineers Australia — Career Episodes, Summary Statement and CPD Best Practices' },
+  { category: 'Employer guide', topic: 'How to Become an Approved Sponsor in Australia — Application, Costs, Obligations and Compliance' },
+  { category: 'Employer guide', topic: 'Labour Market Testing Requirements — What Employers Must Do Before Sponsoring a 482 or 494 Visa' },
+  { category: 'Employer guide', topic: 'Employer Sponsorship Obligations — Record Keeping, Notification Duties, Penalties and How to Stay Compliant' },
+  { category: 'Migration guide', topic: 'Points Test Explained — Subclass 189, 190, 491, How to Maximise Points and Common Mistakes' },
+  { category: 'Migration guide', topic: 'How to Find Employer Sponsorship in Australia — Where to Look, How to Approach Employers and Red Flags' },
+  { category: 'Migration guide', topic: 'English Test for Australian Visas — IELTS vs PTE vs OET, Score Requirements and Preparation Tips' },
+  { category: 'Migration guide', topic: 'Regional Migration Benefits — 494 Visa, Regional Areas, Lower Thresholds and 191 PR Pathway' },
+  { category: 'Migration guide', topic: 'Bridging Visas Explained — Types A B C D E, Work Rights, Travel and What Happens When Your Visa Expires' }
+];
+
+function pickNextLongFormTopic() {
+  var recent = db.prepare("SELECT topic FROM videos WHERE video_type = 'long' AND created_at > datetime('now', '-60 days')").all().map(function(r) { return (r.topic || '').toLowerCase(); });
+  for (var i = 0; i < LONG_FORM_TOPICS.length; i++) {
+    if (recent.indexOf(LONG_FORM_TOPICS[i].topic.toLowerCase()) === -1) {
+      return LONG_FORM_TOPICS[i];
+    }
+  }
+  return LONG_FORM_TOPICS[Math.floor(Math.random() * LONG_FORM_TOPICS.length)];
+}
 
 function pickNextTopic() {
   // Get topics used in last 4 weeks
@@ -670,6 +704,229 @@ async function createAndPublishShort(topicOverride) {
   }
 }
 
+// ===== LONG-FORM VIDEO PIPELINE =====
+async function generateLongFormScript(topicInfo) {
+  var anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  var recent = db.prepare("SELECT title FROM videos WHERE video_type='long' ORDER BY id DESC LIMIT 10").all().map(function(r) { return r.title; });
+
+  var msg = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 4096,
+    messages: [{
+      role: 'user',
+      content: 'You are a content creator for WIDEN Migration Experts, an Australian migration agency in Sydney (MARN 1576536).\n\n' +
+        'Generate a YouTube long-form video script (5-8 minutes when spoken aloud) about:\n' + topicInfo.topic + '\n' +
+        'Category: ' + topicInfo.category + '\n\n' +
+        'STYLE RULES:\n' +
+        '- Conversational, clear English suitable for migrants and non-native speakers\n' +
+        '- Structured with clear sections/chapters\n' +
+        '- Each section should be a self-contained topic (1-2 minutes)\n' +
+        '- Include specific numbers, costs, and timelines where relevant (use 2026 figures)\n' +
+        '- Start with a strong hook: "If you are thinking about [topic], this video covers everything you need to know."\n' +
+        '- End with: "This is general information only, not migration advice. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
+        '- Do NOT repeat these recent titles: ' + recent.join('; ') + '\n\n' +
+        'Return ONLY valid JSON (no markdown):\n' +
+        '{\n' +
+        '  "title": "YouTube title (max 70 chars)",\n' +
+        '  "sections": [\n' +
+        '    {\n' +
+        '      "title": "Section heading (chapter name)",\n' +
+        '      "slides": [\n' +
+        '        { "heading": "Key point (max 5 words)", "body": "1 sentence (max 20 words)" },\n' +
+        '        ... 3-5 slides per section\n' +
+        '      ],\n' +
+        '      "narration": "Full narration for this section (60-90 seconds when spoken)",\n' +
+        '      "bgKeyword": "Pexels search term for this section background"\n' +
+        '    },\n' +
+        '    ... 4-6 sections total\n' +
+        '  ]\n' +
+        '}'
+    }]
+  });
+
+  var text = msg.content[0].text.trim().replace(/^```json?\s*/, '').replace(/\s*```$/, '');
+  return JSON.parse(text);
+}
+
+async function assembleLongFormVideo(sections, audioPaths, outputPath) {
+  // Build one segment per section, then concatenate
+  var segmentFiles = [];
+  var ts = Date.now();
+
+  for (var si = 0; si < sections.length; si++) {
+    var sec = sections[si];
+    var segPath = path.join(tmpDir, 'seg_' + ts + '_' + si + '.mp4');
+    var audioPath = audioPaths[si];
+    var segDuration = await getAudioDuration(audioPath);
+    var slideDuration = segDuration / sec.slides.length;
+
+    // Try Pexels background for this section
+    var bgUrl = null;
+    if (sec.bgKeyword && process.env.PEXELS_API_KEY) {
+      bgUrl = await fetchPexelsVideo(sec.bgKeyword);
+    }
+
+    // Build drawtext filters for this segment's slides
+    var filters = [];
+    if (bgUrl) {
+      var bgFile = path.join(tmpDir, 'segbg_' + ts + '_' + si + '.mp4');
+      try {
+        await downloadFile(bgUrl, bgFile);
+        filters.push('scale=1920:1080:force_original_aspect_ratio=increase', 'crop=1920:1080', 'setpts=PTS-STARTPTS', 'colorchannelmixer=rr=0.35:gg=0.35:bb=0.35');
+      } catch(e) {
+        console.log('[LongForm] Pexels download failed for section ' + si + ', using solid bg');
+        bgFile = null;
+      }
+    } else {
+      var bgFile = null;
+    }
+
+    for (var i = 0; i < sec.slides.length; i++) {
+      var s = (i * slideDuration).toFixed(2);
+      var e = ((i + 1) * slideDuration).toFixed(2);
+      var en = "enable='between(t," + s + "," + e + ")'";
+      var head = (sec.slides[i].heading || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+      var body = (sec.slides[i].body || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+      filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + (i+1) + "/" + sec.slides.length + "':fontcolor=#10b981:fontsize=24:x=60:y=60:" + en);
+      filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + head + "':fontcolor=white:fontsize=56:x=(w-text_w)/2:y=(h/2)-80:" + en);
+      filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='" + body + "':fontcolor=#cbd5e1:fontsize=34:x=(w-text_w)/2:y=(h/2)+40:" + en);
+    }
+    // Section title card at the start (first 3 seconds)
+    var secTitle = (sec.title || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+    filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + secTitle + "':fontcolor=#10b981:fontsize=48:x=(w-text_w)/2:y=(h/2)-20:enable='between(t,0,3)'");
+    // Bottom branding always
+    filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=30:x=(w-text_w)/2:y=h-100");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=22:x=(w-text_w)/2:y=h-60");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General information only. Not migration advice.':fontcolor=#64748b:fontsize=18:x=(w-text_w)/2:y=h-30");
+
+    var filterFile = path.join(tmpDir, 'segf_' + ts + '_' + si + '.txt');
+    fs.writeFileSync(filterFile, filters.join(',\n'));
+
+    var inputFlag = bgFile
+      ? '-stream_loop -1 -i "' + bgFile + '"'
+      : '-f lavfi -i "color=c=#0f172a:s=1920x1080:r=30:d=' + segDuration.toFixed(2) + '"';
+
+    var cmd = ffmpegPath +
+      ' ' + inputFlag +
+      ' -i "' + audioPath + '"' +
+      ' -filter_script:v "' + filterFile + '"' +
+      ' -map 0:v -map 1:a' +
+      ' -c:v libx264 -pix_fmt yuv420p -preset fast' +
+      ' -c:a aac -b:a 128k' +
+      ' -shortest -movflags +faststart' +
+      ' -t ' + segDuration.toFixed(2) +
+      ' -y "' + segPath + '"';
+
+    console.log('[LongForm] Assembling section ' + (si + 1) + '/' + sections.length + ' (' + segDuration.toFixed(1) + 's)...');
+    execSync(cmd, { stdio: 'pipe', timeout: 300000 });
+    segmentFiles.push(segPath);
+
+    // Cleanup temp
+    try { fs.unlinkSync(filterFile); } catch(e) {}
+    if (bgFile) { try { fs.unlinkSync(bgFile); } catch(e) {} }
+  }
+
+  // Concatenate all segments
+  var concatFile = path.join(tmpDir, 'longconcat_' + ts + '.txt');
+  fs.writeFileSync(concatFile, segmentFiles.map(function(f) { return "file '" + f + "'"; }).join('\n'));
+
+  var concatCmd = ffmpegPath +
+    ' -f concat -safe 0 -i "' + concatFile + '"' +
+    ' -c copy -movflags +faststart' +
+    ' -y "' + outputPath + '"';
+
+  console.log('[LongForm] Concatenating ' + segmentFiles.length + ' sections...');
+  execSync(concatCmd, { stdio: 'pipe', timeout: 120000 });
+
+  // Cleanup
+  segmentFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
+  try { fs.unlinkSync(concatFile); } catch(e) {}
+
+  return outputPath;
+}
+
+async function createAndPublishLongForm(topicOverride) {
+  var topicInfo = topicOverride ? { category: 'custom', topic: topicOverride } : pickNextLongFormTopic();
+  console.log('[LongForm] Starting: ' + topicInfo.topic);
+
+  var videoId = db.prepare("INSERT INTO videos (title, topic, category, video_type, status) VALUES ('Generating...', ?, ?, 'long', 'generating')").run(topicInfo.topic, topicInfo.category).lastInsertRowid;
+
+  try {
+    // Step 1: Script
+    console.log('[LongForm] Generating script...');
+    var script = await generateLongFormScript(topicInfo);
+    db.prepare("UPDATE videos SET title=?, script_json=? WHERE id=?").run(script.title, JSON.stringify(script.sections), videoId);
+    console.log('[LongForm] Script: "' + script.title + '" (' + script.sections.length + ' sections)');
+
+    // Step 2: Generate audio per section
+    console.log('[LongForm] Generating voiceover (' + script.sections.length + ' sections)...');
+    var audioPaths = [];
+    var totalDuration = 0;
+    for (var si = 0; si < script.sections.length; si++) {
+      var ap = path.join(tmpDir, 'longaudio_' + videoId + '_' + si + '.mp3');
+      await generateAudio(script.sections[si].narration, ap);
+      var dur = await getAudioDuration(ap);
+      totalDuration += dur;
+      audioPaths.push(ap);
+      console.log('[LongForm]   Section ' + (si + 1) + ': ' + dur.toFixed(1) + 's');
+    }
+    console.log('[LongForm] Total audio: ' + totalDuration.toFixed(1) + 's (' + (totalDuration / 60).toFixed(1) + ' min)');
+    db.prepare("UPDATE videos SET duration_seconds=? WHERE id=?").run(totalDuration, videoId);
+
+    // Step 3: Assemble video
+    console.log('[LongForm] Assembling video...');
+    var videoPath = path.join(tmpDir, 'longvideo_' + videoId + '.mp4');
+    await assembleLongFormVideo(script.sections, audioPaths, videoPath);
+    console.log('[LongForm] Video assembled: ' + videoPath);
+
+    // Cleanup audio
+    audioPaths.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
+
+    // Step 4: Upload
+    if (!isYouTubeAuthorized()) {
+      db.prepare("UPDATE videos SET status='ready', error='YouTube not authorized' WHERE id=?").run(videoId);
+      return { id: videoId, status: 'ready', title: script.title };
+    }
+
+    db.prepare("UPDATE videos SET status='uploading' WHERE id=?").run(videoId);
+
+    // Build chapter timestamps from stored section durations
+    var chapters = '0:00 ' + script.sections[0].title + '\n';
+    var elapsed = 0;
+    for (var ci = 0; ci < script.sections.length; ci++) {
+      var estDur = (script.sections[ci].narration || '').length / 14; // ~14 chars/sec for TTS
+      if (ci > 0) {
+        var mins = Math.floor(elapsed / 60);
+        var secs = Math.floor(elapsed % 60);
+        chapters += mins + ':' + (secs < 10 ? '0' : '') + secs + ' ' + script.sections[ci].title + '\n';
+      }
+      elapsed += estDur;
+    }
+
+    var desc = script.title + '\n\n' +
+      'CHAPTERS:\n' + chapters + '\n' +
+      'DISCLAIMER: This video is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
+      'WIDEN Migration Experts\n' +
+      'widen.com.au | 02 8188 1887\n' +
+      'MARN 1576536\n' +
+      'Office 6, 2-16 Anglo Road, Campsie NSW 2194\n\n' +
+      '#migration #australia #visa #482visa #rpl #migrationagent #sydneymigration';
+
+    var tags = ['migration australia', 'visa australia', '482 visa', 'rpl australia', 'migration agent sydney', 'australian visa', 'employer sponsorship', 'widen migration', topicInfo.category];
+    var result = await uploadToYouTube(videoPath, script.title + ' | WIDEN Migration Experts', desc, tags);
+
+    db.prepare("UPDATE videos SET youtube_id=?, youtube_url=?, status='published', published_at=CURRENT_TIMESTAMP WHERE id=?").run(result.id, result.url, videoId);
+    console.log('[LongForm] Published: ' + result.url);
+
+    try { fs.unlinkSync(videoPath); } catch(e) {}
+    return { id: videoId, youtubeUrl: result.url, title: script.title };
+  } catch(e) {
+    db.prepare("UPDATE videos SET status='failed', error=? WHERE id=?").run(e.message, videoId);
+    console.log('[LongForm] FAILED: ' + e.message);
+    throw e;
+  }
+}
+
 // ===== ADMIN AUTH =====
 // Persist admin tokens in DB so they survive restarts (volume-backed)
 db.exec("CREATE TABLE IF NOT EXISTS admin_tokens (token TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
@@ -745,6 +1002,15 @@ app.post('/api/pause', requireAdmin, function(req, res) {
   res.json({ paused: schedulerPaused });
 });
 
+app.post('/api/generate-long', requireAdmin, async function(req, res) {
+  try {
+    var result = await createAndPublishLongForm(req.body.topic || null);
+    res.json({ success: true, result: result });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
 app.delete('/api/videos/:id', requireAdmin, function(req, res) {
   db.prepare("DELETE FROM videos WHERE id = ?").run(req.params.id);
   res.json({ success: true });
@@ -766,28 +1032,40 @@ function msUntilNext(targetDays) {
 }
 
 function startScheduler() {
-  function scheduleNext() {
-    var ms = msUntilNext([1, 3, 5]); // Mon=1, Wed=3, Fri=5
+  // Shorts: Mon, Wed, Fri at 10am Sydney
+  function scheduleNextShort() {
+    var ms = msUntilNext([1, 3, 5]);
     var nextRun = new Date(Date.now() + ms);
     console.log('[Scheduler] Next short: ' + nextRun.toISOString() + ' (' + Math.round(ms / 3600000) + 'h)');
-
     setTimeout(async function() {
-      if (schedulerPaused) {
-        console.log('[Scheduler] Paused — skipping.');
-        scheduleNext();
-        return;
-      }
-      console.log('[Scheduler] Running at ' + new Date().toISOString());
+      if (schedulerPaused) { console.log('[Scheduler] Paused — skipping short.'); scheduleNextShort(); return; }
+      console.log('[Scheduler] Running short at ' + new Date().toISOString());
       try {
         var result = await createAndPublishShort();
-        console.log('[Scheduler] Published: ' + (result.youtubeUrl || result.status));
-      } catch(e) {
-        console.error('[Scheduler] Failed:', e.message);
-      }
-      scheduleNext();
+        console.log('[Scheduler] Short published: ' + (result.youtubeUrl || result.status));
+      } catch(e) { console.error('[Scheduler] Short failed:', e.message); }
+      scheduleNextShort();
     }, ms);
   }
-  scheduleNext();
+
+  // Long-form: Saturday at 10am Sydney
+  function scheduleNextLong() {
+    var ms = msUntilNext([6]); // Saturday=6
+    var nextRun = new Date(Date.now() + ms);
+    console.log('[Scheduler] Next long-form: ' + nextRun.toISOString() + ' (' + Math.round(ms / 3600000) + 'h)');
+    setTimeout(async function() {
+      if (schedulerPaused) { console.log('[Scheduler] Paused — skipping long-form.'); scheduleNextLong(); return; }
+      console.log('[Scheduler] Running long-form at ' + new Date().toISOString());
+      try {
+        var result = await createAndPublishLongForm();
+        console.log('[Scheduler] Long-form published: ' + (result.youtubeUrl || result.status));
+      } catch(e) { console.error('[Scheduler] Long-form failed:', e.message); }
+      scheduleNextLong();
+    }, ms);
+  }
+
+  scheduleNextShort();
+  scheduleNextLong();
 }
 
 // ===== START =====
