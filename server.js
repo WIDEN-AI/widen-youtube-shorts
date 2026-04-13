@@ -203,7 +203,7 @@ async function generateScript(topicInfo) {
     messages: [{
       role: 'user',
       content: 'You are a content creator for WIDEN Migration Experts, an Australian migration agency in Sydney (MARN 1576536).\n\n' +
-        'Generate a YouTube Shorts script (45-55 seconds when spoken aloud) about: ' + topicInfo.topic + '\n' +
+        'Generate a YouTube Shorts script (25-35 seconds when spoken aloud — MUST be under 40 seconds) about: ' + topicInfo.topic + '\n' +
         'Category: ' + topicInfo.category + '\n\n' +
         'STYLE RULES:\n' +
         '- Conversational, simple English suitable for migrants and non-native speakers\n' +
@@ -215,10 +215,10 @@ async function generateScript(topicInfo) {
         '{\n' +
         '  "title": "Short catchy title for YouTube (max 60 chars)",\n' +
         '  "slides": [\n' +
-        '    { "heading": "Bold text (max 6 words)", "body": "1-2 short sentences (max 25 words)", "icon": "emoji" },\n' +
-        '    ... 5-7 slides total\n' +
+        '    { "heading": "Bold text (max 5 words)", "body": "1 short sentence (max 15 words)", "icon": "emoji" },\n' +
+        '    ... 4-5 slides total (keep it SHORT)\n' +
         '  ],\n' +
-        '  "voiceover": "Full narration script as one continuous paragraph (45-55 seconds when spoken)",\n' +
+        '  "voiceover": "Full narration script as one continuous paragraph (25-35 seconds when spoken — MUST be under 40 seconds total)",\n' +
         '  "bgKeyword": "2-3 word Pexels stock video search term (e.g. Australia city, office work, Sydney skyline, airport travel)"\n' +
         '}'
     }]
@@ -254,7 +254,7 @@ async function generateAudio(text, outputPath) {
       },
       audioConfig: {
         audioEncoding: 'MP3',
-        speakingRate: 0.95,
+        speakingRate: 1.05,
         pitch: -1.0,
         effectsProfileId: ['large-home-entertainment-class-device']
       }
@@ -511,47 +511,48 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
   }
 }
 
-// Fallback: canvas-rendered PNGs on solid background
+// Fallback: FFmpeg color source + drawtext (no canvas, no fontconfig needed)
 async function assembleVideoSolid(slides, audioPath, outputPath, slideDuration) {
   if (!slideDuration) {
     var duration = await getAudioDuration(audioPath);
     slideDuration = duration / slides.length;
   }
-  var ts = Date.now();
-  var slideFiles = [];
-  for (var i = 0; i < slides.length; i++) {
-    var png = renderSlide(slides[i], i, slides.length);
-    var fp = path.join(tmpDir, 'slide_' + ts + '_' + i + '.png');
-    fs.writeFileSync(fp, png);
-    slideFiles.push(fp);
-  }
+  var totalDuration = slideDuration * slides.length;
 
-  var concatPath = path.join(tmpDir, 'concat_' + ts + '.txt');
-  var concatLines = slideFiles.map(function(f) { return "file '" + f + "'\nduration " + slideDuration; }).join('\n');
-  concatLines += "\nfile '" + slideFiles[slideFiles.length - 1] + "'";
-  fs.writeFileSync(concatPath, concatLines);
+  var ffFontR = dtEsc(FONT_REGULAR);
+  var ffFontB = dtEsc(FONT_BOLD);
+
+  var drawtexts = [];
+  for (var i = 0; i < slides.length; i++) {
+    var start = (i * slideDuration).toFixed(2);
+    var end = ((i + 1) * slideDuration).toFixed(2);
+    var en = "enable='between(t\\," + start + '\\,' + end + ")'";
+
+    drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
+    drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc(slides[i].heading || '') + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
+    drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='" + dtEsc(slides[i].body || '') + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
+  }
+  drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
+  drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
+
+  var filterChain = drawtexts.join(',');
 
   return new Promise(function(resolve, reject) {
     ffmpeg()
-      .input(concatPath).inputOptions(['-f', 'concat', '-safe', '0'])
+      .input('color=c=#0f172a:s=1080x1920:d=' + totalDuration.toFixed(2))
+      .inputOptions(['-f', 'lavfi'])
       .input(audioPath)
+      .complexFilter(filterChain, 'v')
       .outputOptions([
+        '-map', '[v]', '-map', '1:a',
         '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast',
         '-c:a', 'aac', '-b:a', '128k',
         '-shortest', '-movflags', '+faststart',
-        '-vf', 'scale=1080:1920'
+        '-t', String(totalDuration.toFixed(2))
       ])
       .output(outputPath)
-      .on('end', function() {
-        slideFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
-        try { fs.unlinkSync(concatPath); } catch(e) {}
-        resolve(outputPath);
-      })
-      .on('error', function(err) {
-        slideFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
-        try { fs.unlinkSync(concatPath); } catch(e) {}
-        reject(err);
-      })
+      .on('end', function() { resolve(outputPath); })
+      .on('error', function(err) { reject(err); })
       .run();
   });
 }
@@ -614,9 +615,18 @@ async function createAndPublishShort(topicOverride) {
     var audioDuration = await getAudioDuration(audioPath);
     console.log('[Pipeline] Audio: ' + audioDuration.toFixed(1) + 's');
 
-    // Validate duration (Shorts must be < 60s)
-    if (audioDuration > 59) {
-      console.log('[Pipeline] WARNING: Audio is ' + audioDuration.toFixed(1) + 's (over 59s limit). Proceeding anyway.');
+    // Validate duration — target under 40s for Shorts
+    if (audioDuration > 40) {
+      console.log('[Pipeline] WARNING: Audio is ' + audioDuration.toFixed(1) + 's (over 40s target). Regenerating shorter script...');
+      // Retry with explicit short instruction
+      topicInfo.topic = topicInfo.topic + ' (VERY SHORT — under 30 seconds)';
+      var shortScript = await generateScript(topicInfo);
+      script = shortScript;
+      db.prepare("UPDATE videos SET title=?, script_json=?, voiceover=? WHERE id=?").run(script.title, JSON.stringify(script.slides), script.voiceover, videoId);
+      fs.unlinkSync(audioPath);
+      await generateAudio(script.voiceover, audioPath);
+      audioDuration = await getAudioDuration(audioPath);
+      console.log('[Pipeline] Retry audio: ' + audioDuration.toFixed(1) + 's');
     }
 
     db.prepare("UPDATE videos SET duration_seconds=? WHERE id=?").run(audioDuration, videoId);
