@@ -450,62 +450,47 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
   }
 
   if (bgPath) {
-    // ===== PEXELS VIDEO BACKGROUND + DRAWTEXT =====
-    return new Promise(function(resolve, reject) {
-      // Build a complex filter:
-      // 1. Loop bg video to match audio duration, scale to 1080x1920, crop center
-      // 2. Add dark overlay (50% black)
-      // 3. For each slide, show drawtext during its time window
+    // ===== PEXELS VIDEO BACKGROUND + DRAWTEXT (raw execSync) =====
+    var filters = ['scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920', 'setpts=PTS-STARTPTS', 'colorchannelmixer=rr=0.4:gg=0.4:bb=0.4'];
+    for (var i = 0; i < slides.length; i++) {
+      var s = (i * slideDuration).toFixed(2);
+      var e = ((i + 1) * slideDuration).toFixed(2);
+      var en = "enable='between(t," + s + "," + e + ")'";
+      var head = (slides[i].heading || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+      var body = (slides[i].body || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+      filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + (i+1) + " / " + slides.length + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
+      filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + head + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
+      filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='" + body + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
+    }
+    filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
 
-      // fontfile paths — on Railway, app code is at /app
-      var ffFontR = dtEsc(FONT_REGULAR);
-      var ffFontB = dtEsc(FONT_BOLD);
+    var filterScript = path.join(tmpDir, 'pxfilter_' + Date.now() + '.txt');
+    fs.writeFileSync(filterScript, filters.join(',\n'));
 
-      var drawtexts = [];
-      for (var i = 0; i < slides.length; i++) {
-        var start = (i * slideDuration).toFixed(2);
-        var end = ((i + 1) * slideDuration).toFixed(2);
-        var en = "enable='between(t," + start + ',' + end + ")'";
+    var cmd = ffmpegPath +
+      ' -stream_loop -1 -i "' + bgPath + '"' +
+      ' -i "' + audioPath + '"' +
+      ' -filter_script:v "' + filterScript + '"' +
+      ' -c:v libx264 -pix_fmt yuv420p -preset fast' +
+      ' -c:a aac -b:a 128k' +
+      ' -shortest -movflags +faststart' +
+      ' -t ' + duration.toFixed(2) +
+      ' -y "' + outputPath + '"';
 
-        // Slide number
-        drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
-
-        // Heading
-        var headText = dtEsc(slides[i].heading || '');
-        drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + headText + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
-
-        // Body
-        var bodyText = dtEsc(slides[i].body || '');
-        drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='" + bodyText + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
-      }
-
-      // Bottom branding (always visible)
-      drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
-      drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
-
-      // Dark overlay: colorchannelmixer dims the video
-      var filterChain = 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,loop=-1:size=900,setpts=N/FRAME_RATE/TB,colorchannelmixer=rr=0.4:gg=0.4:bb=0.4,' + drawtexts.join(',');
-
-      ffmpeg()
-        .input(bgPath)
-        .input(audioPath)
-        .complexFilter(filterChain, 'v')
-        .outputOptions([
-          '-map', '[v]', '-map', '1:a',
-          '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast',
-          '-c:a', 'aac', '-b:a', '128k',
-          '-shortest', '-movflags', '+faststart',
-          '-t', String(duration)
-        ])
-        .output(outputPath)
-        .on('end', function() { cleanup(); resolve(outputPath); })
-        .on('error', function(err) {
-          console.log('[Video] Pexels FFmpeg failed:', err.message, '— retrying with solid bg');
-          cleanup();
-          assembleVideoSolid(slides, audioPath, outputPath, slideDuration).then(resolve).catch(reject);
-        })
-        .run();
-    });
+    console.log('[FFmpeg] Running Pexels-bg command...');
+    try {
+      execSync(cmd, { stdio: 'pipe', timeout: 180000 });
+      try { fs.unlinkSync(filterScript); } catch(e) {}
+      cleanup();
+      return outputPath;
+    } catch(err) {
+      var stderr = err.stderr ? err.stderr.toString().slice(-300) : err.message;
+      console.log('[Video] Pexels FFmpeg failed:', stderr, '— retrying with solid bg');
+      try { fs.unlinkSync(filterScript); } catch(e) {}
+      cleanup();
+      return assembleVideoSolid(slides, audioPath, outputPath, slideDuration);
+    }
   } else {
     return assembleVideoSolid(slides, audioPath, outputPath, slideDuration);
   }
