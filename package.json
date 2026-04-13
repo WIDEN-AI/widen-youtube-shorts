@@ -2,9 +2,13 @@
   "name": "widen-youtube-shorts",
   "version": "1.0.0",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.85.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "better-sqlite3": "^12.8.0",
     "canvas": "^3.1.0",
     "express": "^5.1.0",

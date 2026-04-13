@@ -6,18 +6,16 @@ var Anthropic = require('@anthropic-ai/sdk').default;
 var { google } = require('googleapis');
 var { createCanvas } = require('canvas');
 var ffmpeg = require('fluent-ffmpeg');
+var ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+var ffprobePath = require('@ffprobe-installer/ffprobe').path;
+ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfprobePath(ffprobePath);
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
-var { execSync } = require('child_process');
 
-// Find ffmpeg/ffprobe binary — nix may place it outside default PATH
-try {
-  var ffmpegPath = execSync('which ffmpeg 2>/dev/null || find /nix -name ffmpeg -type f 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
-  var ffprobePath = execSync('which ffprobe 2>/dev/null || find /nix -name ffprobe -type f 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
-  if (ffmpegPath) { ffmpeg.setFfmpegPath(ffmpegPath); console.log('[FFmpeg] found at ' + ffmpegPath); }
-  if (ffprobePath) { ffmpeg.setFfprobePath(ffprobePath); console.log('[FFprobe] found at ' + ffprobePath); }
-} catch(e) { console.log('[FFmpeg] auto-detect failed:', e.message); }
+console.log('[FFmpeg] ' + ffmpegPath);
+console.log('[FFprobe] ' + ffprobePath);
 
 var app = express();
 var PORT = process.env.PORT || 3000;
