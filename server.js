@@ -127,15 +127,122 @@ function pickNextLongFormTopic() {
   return LONG_FORM_TOPICS[Math.floor(Math.random() * LONG_FORM_TOPICS.length)];
 }
 
+// ===== SMART TOPIC RESEARCH =====
+async function fetchGSCQueries() {
+  try {
+    var auth = getOAuth2Client();
+    if (!auth) return [];
+    var searchconsole = google.searchconsole({ version: 'v1', auth: auth });
+    var endDate = new Date().toISOString().split('T')[0];
+    var startDate = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
+
+    // Top search queries by impressions (what people are searching for)
+    var r = await searchconsole.searchanalytics.query({
+      siteUrl: process.env.GSC_PROPERTY || 'https://www.widen.com.au/',
+      requestBody: {
+        startDate: startDate,
+        endDate: endDate,
+        dimensions: ['query'],
+        rowLimit: 30,
+        orderBy: [{ fieldName: 'impressions', sortOrder: 'DESCENDING' }]
+      }
+    });
+    var rows = (r.data.rows || []).map(function(row) {
+      return { query: row.keys[0], impressions: row.impressions, clicks: row.clicks, ctr: (row.ctr * 100).toFixed(1) + '%', position: row.position.toFixed(1) };
+    });
+    console.log('[Research] GSC: ' + rows.length + ' queries fetched');
+    return rows;
+  } catch(e) {
+    console.log('[Research] GSC error:', e.message.slice(0, 100));
+    return [];
+  }
+}
+
+async function fetchYouTubeSuggestions() {
+  var seeds = ['australian visa', '482 visa', 'migration agent australia', 'rpl australia', 'employer sponsorship australia', 'parent visa australia', 'skills assessment australia'];
+  var suggestions = [];
+  for (var i = 0; i < seeds.length; i++) {
+    try {
+      var url = 'https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=' + encodeURIComponent(seeds[i]) + '&hl=en';
+      var r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      var text = await r.text();
+      // Response is JSONP-like: window.google.ac.h([...])
+      var match = text.match(/\[.*\]/s);
+      if (match) {
+        var data = JSON.parse(match[0]);
+        if (data[1]) {
+          data[1].forEach(function(item) {
+            if (item[0] && typeof item[0] === 'string') suggestions.push(item[0]);
+          });
+        }
+      }
+    } catch(e) {}
+  }
+  // Deduplicate
+  suggestions = [...new Set(suggestions)];
+  console.log('[Research] YouTube suggestions: ' + suggestions.length + ' found');
+  return suggestions;
+}
+
+async function researchTopic(isLong) {
+  var recentTitles = db.prepare("SELECT title, topic FROM videos WHERE created_at > datetime('now', '-28 days')").all().map(function(r) { return r.title + ' | ' + r.topic; });
+
+  // Fetch data in parallel
+  var gscData = await fetchGSCQueries();
+  var ytSuggestions = await fetchYouTubeSuggestions();
+
+  // Build research context
+  var gscContext = gscData.length > 0
+    ? 'TOP GOOGLE SEARCH QUERIES (what people are actually searching for on widen.com.au in the last 2 weeks):\n' +
+      gscData.slice(0, 20).map(function(q) { return '  "' + q.query + '" — ' + q.impressions + ' impressions, ' + q.clicks + ' clicks, position ' + q.position; }).join('\n')
+    : 'No GSC data available.';
+
+  var ytContext = ytSuggestions.length > 0
+    ? 'YOUTUBE SEARCH SUGGESTIONS (what people are typing into YouTube right now):\n' +
+      ytSuggestions.slice(0, 25).map(function(s) { return '  "' + s + '"'; }).join('\n')
+    : 'No YouTube suggestions available.';
+
+  var anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  var videoType = isLong ? '5-8 minute long-form deep-dive' : '25-35 second YouTube Short';
+
+  var msg = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 500,
+    messages: [{
+      role: 'user',
+      content: 'You are the content strategist for WIDEN Migration Experts (Australian migration agency, MARN 1576536).\n\n' +
+        'Based on the research data below, pick the SINGLE best topic for a ' + videoType + ' that would get the most views and help the most people.\n\n' +
+        gscContext + '\n\n' +
+        ytContext + '\n\n' +
+        'ALREADY COVERED (do NOT pick these):\n' + (recentTitles.join('\n') || 'None yet') + '\n\n' +
+        'RULES:\n' +
+        '- Pick a topic people are actually searching for RIGHT NOW (from the data above)\n' +
+        '- Prefer high-impression, low-click queries from GSC (= content gap, people searching but not finding good answers)\n' +
+        '- Prefer YouTube suggestions that match migration/visa topics\n' +
+        '- The topic must be about Australian migration, visas, RPL, skills assessment, or employer sponsorship\n' +
+        '- If no clear winner from the data, pick from your knowledge of trending Australian migration topics\n\n' +
+        'Return ONLY valid JSON:\n' +
+        '{\n' +
+        '  "topic": "The specific topic you chose (be descriptive)",\n' +
+        '  "category": "Category name (e.g. 482 visa tips, RPL explainers, etc.)",\n' +
+        '  "reasoning": "One sentence explaining why this topic was chosen from the data"\n' +
+        '}'
+    }]
+  });
+
+  var text = msg.content[0].text.trim().replace(/^```json?\s*/, '').replace(/\s*```$/, '');
+  var result = JSON.parse(text);
+  console.log('[Research] AI picked: "' + result.topic + '" — ' + result.reasoning);
+  return { topic: result.topic, category: result.category };
+}
+
 function pickNextTopic() {
-  // Get topics used in last 4 weeks
-  var recent = db.prepare("SELECT topic FROM videos WHERE created_at > datetime('now', '-28 days')").all().map(function(r) { return (r.topic || '').toLowerCase(); });
-  // Rotate categories evenly
+  // Sync fallback using hardcoded list (used if research fails)
+  var recent = db.prepare("SELECT topic FROM videos WHERE video_type != 'long' AND created_at > datetime('now', '-28 days')").all().map(function(r) { return (r.topic || '').toLowerCase(); });
   var catCounts = {};
   CATEGORIES.forEach(function(c) { catCounts[c.name] = 0; });
-  var recentCats = db.prepare("SELECT category FROM videos WHERE created_at > datetime('now', '-14 days')").all();
+  var recentCats = db.prepare("SELECT category FROM videos WHERE video_type != 'long' AND created_at > datetime('now', '-14 days')").all();
   recentCats.forEach(function(r) { if (r.category && catCounts[r.category] !== undefined) catCounts[r.category]++; });
-  // Pick least-used category
   var sorted = Object.entries(catCounts).sort(function(a, b) { return a[1] - b[1]; });
   for (var i = 0; i < sorted.length; i++) {
     var catName = sorted[i][0];
@@ -147,7 +254,6 @@ function pickNextTopic() {
       }
     }
   }
-  // Fallback: random from any category
   var all = [];
   CATEGORIES.forEach(function(c) { c.topics.forEach(function(t) { all.push({ category: c.name, topic: t }); }); });
   return all[Math.floor(Math.random() * all.length)];
@@ -729,7 +835,18 @@ async function uploadToYouTube(videoPath, title, description, tags, isLong) {
 
 // ===== MAIN PIPELINE =====
 async function createAndPublishShort(topicOverride) {
-  var topicInfo = topicOverride ? { category: 'custom', topic: topicOverride } : pickNextTopic();
+  var topicInfo;
+  if (topicOverride) {
+    topicInfo = { category: 'custom', topic: topicOverride };
+  } else {
+    try {
+      console.log('[Pipeline] Researching best topic...');
+      topicInfo = await researchTopic(false);
+    } catch(e) {
+      console.log('[Pipeline] Research failed (' + e.message.slice(0, 80) + ') — using hardcoded topic');
+      topicInfo = pickNextTopic();
+    }
+  }
   console.log('[Pipeline] Starting: ' + topicInfo.topic + ' (' + topicInfo.category + ')');
 
   var videoId = db.prepare("INSERT INTO videos (title, topic, category, status) VALUES ('Generating...', ?, ?, 'generating')").run(topicInfo.topic, topicInfo.category).lastInsertRowid;
@@ -986,7 +1103,18 @@ async function assembleLongFormVideo(sections, audioPaths, outputPath) {
 }
 
 async function createAndPublishLongForm(topicOverride) {
-  var topicInfo = topicOverride ? { category: 'custom', topic: topicOverride } : pickNextLongFormTopic();
+  var topicInfo;
+  if (topicOverride) {
+    topicInfo = { category: 'custom', topic: topicOverride };
+  } else {
+    try {
+      console.log('[LongForm] Researching best topic...');
+      topicInfo = await researchTopic(true);
+    } catch(e) {
+      console.log('[LongForm] Research failed (' + e.message.slice(0, 80) + ') — using hardcoded topic');
+      topicInfo = pickNextLongFormTopic();
+    }
+  }
   console.log('[LongForm] Starting: ' + topicInfo.topic);
 
   var videoId = db.prepare("INSERT INTO videos (title, topic, category, video_type, status) VALUES ('Generating...', ?, ?, 'long', 'generating')").run(topicInfo.topic, topicInfo.category).lastInsertRowid;
@@ -1178,6 +1306,18 @@ app.post('/api/generate-long', requireAdmin, async function(req, res) {
   try {
     var result = await createAndPublishLongForm(req.body.topic || null);
     res.json({ success: true, result: result });
+  } catch(e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.post('/api/research', requireAdmin, async function(req, res) {
+  try {
+    var isLong = req.body.type === 'long';
+    var gsc = await fetchGSCQueries();
+    var yt = await fetchYouTubeSuggestions();
+    var topic = await researchTopic(isLong);
+    res.json({ success: true, topic: topic, gscQueries: gsc.slice(0, 15), ytSuggestions: yt.slice(0, 20) });
   } catch(e) {
     res.json({ success: false, error: e.message });
   }

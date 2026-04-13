@@ -76,6 +76,7 @@ input.topic-input{padding:10px 14px;background:rgba(15,23,42,0.6);border:1px sol
       <button class="btn btn-green" id="genBtn" onclick="generate()">Generate Short</button>
       <button class="btn btn-indigo" id="genLongBtn" onclick="generateLong()">Generate Long Video</button>
       <button class="btn btn-gray" onclick="preview()">Preview Script</button>
+      <button class="btn btn-gray" onclick="research()">Research Topics</button>
       <button class="btn btn-orange" id="pauseBtn" onclick="togglePause()">Pause</button>
       <a href="/auth/youtube" class="btn btn-gray" id="authBtn">Connect YouTube</a>
     </div>
@@ -203,6 +204,29 @@ function preview() {
     } else {
       alert('Preview failed: ' + (d.error || 'Unknown'));
     }
+  });
+}
+
+function research() {
+  var box = document.getElementById('previewBox');
+  box.style.display = 'block';
+  document.getElementById('previewContent').innerHTML = '<em>Researching trending topics from GSC + YouTube...</em>';
+  api('/api/research', { method: 'POST', body: JSON.stringify({}) }).then(function(d) {
+    if (!d.success) { document.getElementById('previewContent').innerHTML = 'Research failed: ' + (d.error || ''); return; }
+    var html = '<h4 style="color:#10b981;margin-bottom:12px;">AI Recommendation</h4>';
+    html += '<div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:14px;margin-bottom:16px;">';
+    html += '<strong>' + d.topic.topic + '</strong><br><span style="color:#94a3b8;font-size:0.85em;">' + d.topic.category + ' — ' + (d.topic.reasoning || '') + '</span></div>';
+    if (d.gscQueries && d.gscQueries.length) {
+      html += '<h4 style="margin:12px 0 8px;">Top Google Search Queries (last 2 weeks)</h4><table style="width:100%;font-size:0.82em;"><tr><th style="text-align:left;padding:4px 8px;color:#94a3b8;">Query</th><th style="padding:4px 8px;color:#94a3b8;">Impressions</th><th style="padding:4px 8px;color:#94a3b8;">Clicks</th><th style="padding:4px 8px;color:#94a3b8;">Position</th></tr>';
+      d.gscQueries.forEach(function(q) { html += '<tr><td style="padding:4px 8px;">' + q.query + '</td><td style="padding:4px 8px;text-align:center;">' + q.impressions + '</td><td style="padding:4px 8px;text-align:center;">' + q.clicks + '</td><td style="padding:4px 8px;text-align:center;">' + q.position + '</td></tr>'; });
+      html += '</table>';
+    }
+    if (d.ytSuggestions && d.ytSuggestions.length) {
+      html += '<h4 style="margin:12px 0 8px;">YouTube Search Suggestions</h4><div style="display:flex;flex-wrap:wrap;gap:6px;">';
+      d.ytSuggestions.forEach(function(s) { html += '<span style="background:#334155;padding:4px 10px;border-radius:4px;font-size:0.8em;">' + s + '</span>'; });
+      html += '</div>';
+    }
+    document.getElementById('previewContent').innerHTML = html;
   });
 }
 
