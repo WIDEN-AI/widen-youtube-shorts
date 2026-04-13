@@ -9,6 +9,15 @@ var ffmpeg = require('fluent-ffmpeg');
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
+var { execSync } = require('child_process');
+
+// Find ffmpeg/ffprobe binary — nix may place it outside default PATH
+try {
+  var ffmpegPath = execSync('which ffmpeg 2>/dev/null || find /nix -name ffmpeg -type f 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
+  var ffprobePath = execSync('which ffprobe 2>/dev/null || find /nix -name ffprobe -type f 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
+  if (ffmpegPath) { ffmpeg.setFfmpegPath(ffmpegPath); console.log('[FFmpeg] found at ' + ffmpegPath); }
+  if (ffprobePath) { ffmpeg.setFfprobePath(ffprobePath); console.log('[FFprobe] found at ' + ffprobePath); }
+} catch(e) { console.log('[FFmpeg] auto-detect failed:', e.message); }
 
 var app = express();
 var PORT = process.env.PORT || 3000;
@@ -18,6 +27,23 @@ var ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'WidenShorts2026!';
 var dbPath = fs.existsSync('/data') ? '/data/shorts.db' : './shorts.db';
 var db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
+
+// Clear stale YouTube token from DB so YOUTUBE_REFRESH_TOKEN env var is picked up
+if (process.env.YOUTUBE_REFRESH_TOKEN) {
+  var existingToken = db.prepare("SELECT value FROM settings WHERE key='google_token'").get();
+  if (existingToken) {
+    try {
+      var parsed = JSON.parse(existingToken.value);
+      if (parsed.refresh_token !== process.env.YOUTUBE_REFRESH_TOKEN) {
+        db.prepare("DELETE FROM settings WHERE key='google_token'").run();
+        console.log('[YouTube] Cleared stale DB token — will use YOUTUBE_REFRESH_TOKEN env var');
+      }
+    } catch(e) {
+      db.prepare("DELETE FROM settings WHERE key='google_token'").run();
+      console.log('[YouTube] Cleared corrupt DB token');
+    }
+  }
+}
 
 var tmpDir = fs.existsSync('/data') ? '/data/tmp' : './tmp';
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
