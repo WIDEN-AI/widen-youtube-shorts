@@ -4,7 +4,7 @@ var express = require('express');
 var Database = require('better-sqlite3');
 var Anthropic = require('@anthropic-ai/sdk').default;
 var { google } = require('googleapis');
-var { createCanvas } = require('canvas');
+var { createCanvas, registerFont } = require('canvas');
 var ffmpeg = require('fluent-ffmpeg');
 var ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 var ffprobePath = require('@ffprobe-installer/ffprobe').path;
@@ -13,9 +13,32 @@ ffmpeg.setFfprobePath(ffprobePath);
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
+var { execSync } = require('child_process');
 
 console.log('[FFmpeg] ' + ffmpegPath);
 console.log('[FFprobe] ' + ffprobePath);
+
+// Register DejaVu Sans font for canvas text rendering on Railway
+try {
+  var fontPath = execSync('fc-list "DejaVu Sans" -f "%{file}\n" 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
+  if (fontPath && fs.existsSync(fontPath)) {
+    registerFont(fontPath, { family: 'DejaVu Sans' });
+    console.log('[Font] Registered DejaVu Sans: ' + fontPath);
+  } else {
+    console.log('[Font] DejaVu Sans not found via fc-list, trying common paths...');
+    var tryPaths = ['/nix/store', '/usr/share/fonts'];
+    for (var tp of tryPaths) {
+      try {
+        var found = execSync('find ' + tp + ' -name "DejaVuSans.ttf" 2>/dev/null | head -1', { encoding: 'utf8', timeout: 5000 }).trim();
+        if (found && fs.existsSync(found)) {
+          registerFont(found, { family: 'DejaVu Sans' });
+          console.log('[Font] Registered DejaVu Sans: ' + found);
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+} catch(e) { console.log('[Font] Warning: could not register DejaVu Sans:', e.message); }
 
 var app = express();
 var PORT = process.env.PORT || 3000;
@@ -308,26 +331,26 @@ function renderSlide(slide, index, total) {
   ctx.roundRect(W / 2 - 40, 80, 80, 40, 20);
   ctx.fill();
   ctx.fillStyle = '#10b981';
-  ctx.font = 'bold 22px sans-serif';
+  ctx.font = 'bold 22px "DejaVu Sans", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText((index + 1) + ' / ' + total, W / 2, 107);
 
   // Icon/emoji
   if (slide.icon) {
-    ctx.font = '120px sans-serif';
+    ctx.font = '120px "DejaVu Sans", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(slide.icon, W / 2, 400);
   }
 
   // Heading
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 72px sans-serif';
+  ctx.font = 'bold 72px "DejaVu Sans", sans-serif';
   ctx.textAlign = 'center';
   wrapText(ctx, slide.heading || '', W / 2, 560, 900, 88);
 
   // Body
   ctx.fillStyle = '#cbd5e1';
-  ctx.font = '44px sans-serif';
+  ctx.font = '44px "DejaVu Sans", sans-serif';
   ctx.textAlign = 'center';
   wrapText(ctx, slide.body || '', W / 2, 820, 900, 58);
 
@@ -335,11 +358,11 @@ function renderSlide(slide, index, total) {
   ctx.fillStyle = 'rgba(16,185,129,0.15)';
   ctx.fillRect(0, H - 180, W, 180);
   ctx.fillStyle = '#10b981';
-  ctx.font = 'bold 38px sans-serif';
+  ctx.font = 'bold 38px "DejaVu Sans", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('WIDEN Migration Experts', W / 2, H - 110);
   ctx.fillStyle = '#64748b';
-  ctx.font = '28px sans-serif';
+  ctx.font = '28px "DejaVu Sans", sans-serif';
   ctx.fillText('widen.com.au | 02 8188 1887 | MARN 1576536', W / 2, H - 60);
 
   return canvas.toBuffer('image/png');

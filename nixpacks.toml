@@ -1,5 +1,8 @@
 [phases.setup]
-nixPkgs = ["nodejs_20", "python3", "pkg-config", "cairo", "pango", "libjpeg", "giflib", "librsvg", "ffmpeg"]
+nixPkgs = ["nodejs_20", "python3", "pkg-config", "cairo", "pango", "libjpeg", "giflib", "librsvg", "ffmpeg", "dejavu_fonts", "fontconfig"]
+
+[phases.build]
+cmds = ["npm install", "fc-cache -fv"]
 
 [start]
 cmd = "node server.js"
