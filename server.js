@@ -514,47 +514,49 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
 // Fallback: FFmpeg color source + drawtext (no canvas, no fontconfig needed)
 async function assembleVideoSolid(slides, audioPath, outputPath, slideDuration) {
   if (!slideDuration) {
-    var duration = await getAudioDuration(audioPath);
-    slideDuration = duration / slides.length;
+    var dur = await getAudioDuration(audioPath);
+    slideDuration = dur / slides.length;
   }
   var totalDuration = slideDuration * slides.length;
 
-  var ffFontR = dtEsc(FONT_REGULAR);
-  var ffFontB = dtEsc(FONT_BOLD);
-
-  var drawtexts = [];
+  // Build filter_script file — avoids all shell/fluent-ffmpeg escaping issues
+  var filters = [];
   for (var i = 0; i < slides.length; i++) {
-    var start = (i * slideDuration).toFixed(2);
-    var end = ((i + 1) * slideDuration).toFixed(2);
-    var en = "enable='between(t\\," + start + '\\,' + end + ")'";
-
-    drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
-    drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc(slides[i].heading || '') + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
-    drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='" + dtEsc(slides[i].body || '') + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
+    var s = (i * slideDuration).toFixed(2);
+    var e = ((i + 1) * slideDuration).toFixed(2);
+    var en = "enable='between(t," + s + "," + e + ")'";
+    var head = (slides[i].heading || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+    var body = (slides[i].body || '').replace(/'/g, "\u2019").replace(/:/g, "\\:");
+    filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + (i+1) + " / " + slides.length + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
+    filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='" + head + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='" + body + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
   }
-  drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
-  drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
+  filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
+  filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
 
-  var filterChain = drawtexts.join(',');
+  var filterScript = path.join(tmpDir, 'filter_' + Date.now() + '.txt');
+  fs.writeFileSync(filterScript, filters.join(',\n'));
 
-  return new Promise(function(resolve, reject) {
-    ffmpeg()
-      .input('color=c=#0f172a:s=1080x1920:d=' + totalDuration.toFixed(2))
-      .inputOptions(['-f', 'lavfi'])
-      .input(audioPath)
-      .complexFilter(filterChain, 'v')
-      .outputOptions([
-        '-map', '[v]', '-map', '1:a',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast',
-        '-c:a', 'aac', '-b:a', '128k',
-        '-shortest', '-movflags', '+faststart',
-        '-t', String(totalDuration.toFixed(2))
-      ])
-      .output(outputPath)
-      .on('end', function() { resolve(outputPath); })
-      .on('error', function(err) { reject(err); })
-      .run();
-  });
+  var cmd = ffmpegPath +
+    ' -f lavfi -i "color=c=#0f172a:s=1080x1920:r=30:d=' + totalDuration.toFixed(2) + '"' +
+    ' -i "' + audioPath + '"' +
+    ' -filter_script:v "' + filterScript + '"' +
+    ' -c:v libx264 -pix_fmt yuv420p -preset fast' +
+    ' -c:a aac -b:a 128k' +
+    ' -shortest -movflags +faststart' +
+    ' -t ' + totalDuration.toFixed(2) +
+    ' -y "' + outputPath + '"';
+
+  console.log('[FFmpeg] Running solid-bg command...');
+  try {
+    execSync(cmd, { stdio: 'pipe', timeout: 120000 });
+    try { fs.unlinkSync(filterScript); } catch(e) {}
+    return outputPath;
+  } catch(err) {
+    try { fs.unlinkSync(filterScript); } catch(e) {}
+    var stderr = err.stderr ? err.stderr.toString().slice(-500) : err.message;
+    throw new Error('FFmpeg solid-bg failed: ' + stderr);
+  }
 }
 
 // ===== YOUTUBE UPLOAD =====
