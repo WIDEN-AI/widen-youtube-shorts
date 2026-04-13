@@ -243,7 +243,7 @@ async function generateScript(topicInfo) {
         '- Conversational, simple English suitable for migrants and non-native speakers\n' +
         '- No jargon without explanation\n' +
         '- Engaging hook in the first sentence\n' +
-        '- End the voiceover with: "This is general information only, not migration advice. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
+        '- End the voiceover with: "This is general information only, not migration advice. This content is AI-generated and may contain errors. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
         '- Do NOT repeat any of these recent titles: ' + recent.join('; ') + '\n\n' +
         'Return ONLY valid JSON (no markdown):\n' +
         '{\n' +
@@ -606,7 +606,7 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
     }
     filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
     filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
-    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General information only. Not migration advice.':fontcolor=#64748b:fontsize=20:x=(w-text_w)/2:y=h-40");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General info only. Not migration advice. AI-generated — errors may occur.':fontcolor=#64748b:fontsize=20:x=(w-text_w)/2:y=h-40");
 
     var filterScript = path.join(tmpDir, 'pxfilter_' + Date.now() + '.txt');
     fs.writeFileSync(filterScript, filters.join(',\n'));
@@ -813,7 +813,7 @@ async function createAndPublishShort(topicOverride) {
 
     var desc = script.title + '\n\n' +
       script.slides.map(function(s) { return s.heading; }).join(' | ') + '\n\n' +
-      'DISCLAIMER: This video is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
+      'DISCLAIMER: This video is AI-generated content and may contain errors or inaccuracies. It is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
       'WIDEN Migration Experts\n' +
       'widen.com.au | 02 8188 1887\n' +
       'MARN 1576536\n' +
@@ -863,7 +863,7 @@ async function generateLongFormScript(topicInfo) {
         '- Each section should be a self-contained topic (1-2 minutes)\n' +
         '- Include specific numbers, costs, and timelines where relevant (use 2026 figures)\n' +
         '- Start with a strong hook: "If you are thinking about [topic], this video covers everything you need to know."\n' +
-        '- End with: "This is general information only, not migration advice. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
+        '- End with: "This is general information only, not migration advice. This content is AI-generated and may contain errors. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
         '- Do NOT repeat these recent titles: ' + recent.join('; ') + '\n\n' +
         'Return ONLY valid JSON (no markdown):\n' +
         '{\n' +
@@ -937,7 +937,7 @@ async function assembleLongFormVideo(sections, audioPaths, outputPath) {
     // Bottom branding always
     filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=30:x=(w-text_w)/2:y=h-100");
     filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=22:x=(w-text_w)/2:y=h-60");
-    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General information only. Not migration advice.':fontcolor=#64748b:fontsize=18:x=(w-text_w)/2:y=h-30");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General info only. Not migration advice. AI-generated — errors may occur.':fontcolor=#64748b:fontsize=18:x=(w-text_w)/2:y=h-30");
 
     var filterFile = path.join(tmpDir, 'segf_' + ts + '_' + si + '.txt');
     fs.writeFileSync(filterFile, filters.join(',\n'));
@@ -1071,7 +1071,7 @@ async function createAndPublishLongForm(topicOverride) {
 
     var desc = script.title + '\n\n' +
       'CHAPTERS:\n' + chapters + '\n' +
-      'DISCLAIMER: This video is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
+      'DISCLAIMER: This video is AI-generated content and may contain errors or inaccuracies. It is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
       'WIDEN Migration Experts\n' +
       'widen.com.au | 02 8188 1887\n' +
       'MARN 1576536\n' +
