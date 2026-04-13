@@ -209,7 +209,7 @@ async function generateScript(topicInfo) {
         '- Conversational, simple English suitable for migrants and non-native speakers\n' +
         '- No jargon without explanation\n' +
         '- Engaging hook in the first sentence\n' +
-        '- End the voiceover with: "Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
+        '- End the voiceover with: "This is general information only, not migration advice. Always check with a registered migration agent. Call us on 02 8188 1887 or visit widen.com.au for a free consultation."\n' +
         '- Do NOT repeat any of these recent titles: ' + recent.join('; ') + '\n\n' +
         'Return ONLY valid JSON (no markdown):\n' +
         '{\n' +
@@ -464,6 +464,7 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
     }
     filters.push("drawtext=fontfile='" + FONT_BOLD + "':text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
     filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
+    filters.push("drawtext=fontfile='" + FONT_REGULAR + "':text='General information only. Not migration advice.':fontcolor=#64748b:fontsize=20:x=(w-text_w)/2:y=h-40");
 
     var filterScript = path.join(tmpDir, 'pxfilter_' + Date.now() + '.txt');
     fs.writeFileSync(filterScript, filters.join(',\n'));
@@ -644,6 +645,7 @@ async function createAndPublishShort(topicOverride) {
 
     var desc = script.title + '\n\n' +
       script.slides.map(function(s) { return s.heading; }).join(' | ') + '\n\n' +
+      'DISCLAIMER: This video is general information only and does not constitute migration advice. Always consult a registered migration agent before making decisions about your visa or migration pathway.\n\n' +
       'WIDEN Migration Experts\n' +
       'widen.com.au | 02 8188 1887\n' +
       'MARN 1576536\n' +
