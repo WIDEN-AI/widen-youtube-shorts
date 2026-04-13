@@ -472,6 +472,7 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
       ' -stream_loop -1 -i "' + bgPath + '"' +
       ' -i "' + audioPath + '"' +
       ' -filter_script:v "' + filterScript + '"' +
+      ' -map 0:v -map 1:a' +
       ' -c:v libx264 -pix_fmt yuv420p -preset fast' +
       ' -c:a aac -b:a 128k' +
       ' -shortest -movflags +faststart' +
@@ -526,6 +527,7 @@ async function assembleVideoSolid(slides, audioPath, outputPath, slideDuration) 
     ' -f lavfi -i "color=c=#0f172a:s=1080x1920:r=30:d=' + totalDuration.toFixed(2) + '"' +
     ' -i "' + audioPath + '"' +
     ' -filter_script:v "' + filterScript + '"' +
+    ' -map 0:v -map 1:a' +
     ' -c:v libx264 -pix_fmt yuv420p -preset fast' +
     ' -c:a aac -b:a 128k' +
     ' -shortest -movflags +faststart' +
