@@ -1,0 +1,5 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "python3", "pkg-config", "cairo", "pango", "libjpeg", "giflib", "librsvg", "ffmpeg"]
+
+[start]
+cmd = "node server.js"
