@@ -195,24 +195,48 @@ async function generateScript(topicInfo) {
   return JSON.parse(text);
 }
 
-// ===== VOICE SYNTHESIS (ElevenLabs) =====
+// ===== VOICE SYNTHESIS (Google Cloud Text-to-Speech) =====
 async function generateAudio(text, outputPath) {
-  var voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB'; // Adam
-  var r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + voiceId, {
+  var auth = getOAuth2Client();
+  if (!auth) throw new Error('Google credentials not configured');
+
+  // Google TTS REST API — uses the same OAuth2 credentials as YouTube
+  var accessToken = (await auth.getAccessToken()).token;
+  var voiceName = process.env.TTS_VOICE || 'en-AU-Neural2-B'; // Professional Australian male
+
+  var r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
     method: 'POST',
-    headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': 'Bearer ' + accessToken,
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify({
-      text: text,
-      model_id: 'eleven_multilingual_v2',
-      voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.3 }
+      input: { text: text },
+      voice: {
+        languageCode: 'en-AU',
+        name: voiceName,
+        ssmlGender: 'MALE'
+      },
+      audioConfig: {
+        audioEncoding: 'MP3',
+        speakingRate: 0.95,
+        pitch: -1.0,
+        effectsProfileId: ['large-home-entertainment-class-device']
+      }
     })
   });
+
   if (!r.ok) {
     var errBody = await r.text();
-    throw new Error('ElevenLabs ' + r.status + ': ' + errBody.slice(0, 200));
+    throw new Error('Google TTS ' + r.status + ': ' + errBody.slice(0, 300));
   }
-  var buf = Buffer.from(await r.arrayBuffer());
+
+  var data = await r.json();
+  if (!data.audioContent) throw new Error('Google TTS returned no audio content');
+
+  var buf = Buffer.from(data.audioContent, 'base64');
   fs.writeFileSync(outputPath, buf);
+  console.log('[TTS] Generated ' + (buf.length / 1024).toFixed(0) + ' KB audio via Google Cloud TTS (' + voiceName + ')');
   return outputPath;
 }
 
@@ -576,9 +600,7 @@ app.listen(PORT, function() {
   if (!process.env.GOOGLE_CREDENTIALS_JSON) {
     console.log('[WIDEN YouTube Shorts] WARNING: GOOGLE_CREDENTIALS_JSON not set. Visit /auth/youtube after setting it.');
   }
-  if (!process.env.ELEVENLABS_API_KEY) {
-    console.log('[WIDEN YouTube Shorts] WARNING: ELEVENLABS_API_KEY not set. Voice synthesis will fail.');
-  }
+  console.log('[WIDEN YouTube Shorts] TTS: Google Cloud Text-to-Speech (' + (process.env.TTS_VOICE || 'en-AU-Neural2-B') + ')');
   if (!process.env.ANTHROPIC_API_KEY) {
     console.log('[WIDEN YouTube Shorts] WARNING: ANTHROPIC_API_KEY not set. Script generation will fail.');
   }
