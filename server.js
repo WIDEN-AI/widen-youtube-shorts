@@ -18,27 +18,14 @@ var { execSync } = require('child_process');
 console.log('[FFmpeg] ' + ffmpegPath);
 console.log('[FFprobe] ' + ffprobePath);
 
-// Register DejaVu Sans font for canvas text rendering on Railway
+// Register bundled DejaVu Sans fonts for canvas text rendering
+var FONT_REGULAR = path.join(__dirname, 'fonts', 'DejaVuSans.ttf');
+var FONT_BOLD = path.join(__dirname, 'fonts', 'DejaVuSans-Bold.ttf');
 try {
-  var fontPath = execSync('fc-list "DejaVu Sans" -f "%{file}\n" 2>/dev/null | head -1', { encoding: 'utf8' }).trim();
-  if (fontPath && fs.existsSync(fontPath)) {
-    registerFont(fontPath, { family: 'DejaVu Sans' });
-    console.log('[Font] Registered DejaVu Sans: ' + fontPath);
-  } else {
-    console.log('[Font] DejaVu Sans not found via fc-list, trying common paths...');
-    var tryPaths = ['/nix/store', '/usr/share/fonts'];
-    for (var tp of tryPaths) {
-      try {
-        var found = execSync('find ' + tp + ' -name "DejaVuSans.ttf" 2>/dev/null | head -1', { encoding: 'utf8', timeout: 5000 }).trim();
-        if (found && fs.existsSync(found)) {
-          registerFont(found, { family: 'DejaVu Sans' });
-          console.log('[Font] Registered DejaVu Sans: ' + found);
-          break;
-        }
-      } catch(e) {}
-    }
-  }
-} catch(e) { console.log('[Font] Warning: could not register DejaVu Sans:', e.message); }
+  registerFont(FONT_REGULAR, { family: 'DejaVu Sans', weight: 'normal' });
+  registerFont(FONT_BOLD, { family: 'DejaVu Sans', weight: 'bold' });
+  console.log('[Font] Registered bundled DejaVu Sans + Bold');
+} catch(e) { console.log('[Font] Warning:', e.message); }
 
 var app = express();
 var PORT = process.env.PORT || 3000;
@@ -470,6 +457,10 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
       // 2. Add dark overlay (50% black)
       // 3. For each slide, show drawtext during its time window
 
+      // fontfile paths — on Railway, app code is at /app
+      var ffFontR = dtEsc(FONT_REGULAR);
+      var ffFontB = dtEsc(FONT_BOLD);
+
       var drawtexts = [];
       for (var i = 0; i < slides.length; i++) {
         var start = (i * slideDuration).toFixed(2);
@@ -477,20 +468,20 @@ async function assembleVideo(slides, audioPath, outputPath, bgVideoUrl) {
         var en = "enable='between(t," + start + ',' + end + ")'";
 
         // Slide number
-        drawtexts.push("drawtext=text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
+        drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + dtEsc((i + 1) + ' / ' + slides.length) + "':fontcolor=#10b981:fontsize=28:x=(w-text_w)/2:y=100:" + en);
 
         // Heading
         var headText = dtEsc(slides[i].heading || '');
-        drawtexts.push("drawtext=text='" + headText + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
+        drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='" + headText + "':fontcolor=white:fontsize=64:x=(w-text_w)/2:y=(h/2)-160:" + en);
 
         // Body
         var bodyText = dtEsc(slides[i].body || '');
-        drawtexts.push("drawtext=text='" + bodyText + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
+        drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='" + bodyText + "':fontcolor=#cbd5e1:fontsize=38:x=(w-text_w)/2:y=(h/2)+20:" + en);
       }
 
       // Bottom branding (always visible)
-      drawtexts.push("drawtext=text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
-      drawtexts.push("drawtext=text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
+      drawtexts.push("drawtext=fontfile=" + ffFontB + ":text='WIDEN Migration Experts':fontcolor=#10b981:fontsize=36:x=(w-text_w)/2:y=h-140");
+      drawtexts.push("drawtext=fontfile=" + ffFontR + ":text='widen.com.au | MARN 1576536':fontcolor=#94a3b8:fontsize=26:x=(w-text_w)/2:y=h-80");
 
       // Dark overlay: colorchannelmixer dims the video
       var filterChain = 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,loop=-1:size=900,setpts=N/FRAME_RATE/TB,colorchannelmixer=rr=0.4:gg=0.4:bb=0.4,' + drawtexts.join(',');
