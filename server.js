@@ -1343,10 +1343,23 @@ function msUntilNext(targetDays) {
   return 86400000;
 }
 
+function msUntilNext3pm(targetDays) {
+  var now = new Date();
+  var sydneyNow = new Date(now.toLocaleString('en-US', { timeZone: 'Australia/Sydney' }));
+  for (var daysAhead = 0; daysAhead < 8; daysAhead++) {
+    var candidate = new Date(sydneyNow.getTime() + daysAhead * 86400000);
+    candidate.setHours(15, 0, 0, 0);
+    if (targetDays.indexOf(candidate.getDay()) !== -1 && candidate.getTime() > sydneyNow.getTime()) {
+      return candidate.getTime() - sydneyNow.getTime();
+    }
+  }
+  return 86400000;
+}
+
 function startScheduler() {
-  // Shorts: Mon, Wed, Fri at 10am Sydney
+  // Shorts: Every day at 10am Sydney
   function scheduleNextShort() {
-    var ms = msUntilNext([1, 3, 5]);
+    var ms = msUntilNext([0, 1, 2, 3, 4, 5, 6]);
     var nextRun = new Date(Date.now() + ms);
     console.log('[Scheduler] Next short: ' + nextRun.toISOString() + ' (' + Math.round(ms / 3600000) + 'h)');
     setTimeout(async function() {
@@ -1360,9 +1373,9 @@ function startScheduler() {
     }, ms);
   }
 
-  // Long-form: Saturday at 10am Sydney
+  // Long-form: Every day at 3pm Sydney
   function scheduleNextLong() {
-    var ms = msUntilNext([6]); // Saturday=6
+    var ms = msUntilNext3pm([0, 1, 2, 3, 4, 5, 6]);
     var nextRun = new Date(Date.now() + ms);
     console.log('[Scheduler] Next long-form: ' + nextRun.toISOString() + ' (' + Math.round(ms / 3600000) + 'h)');
     setTimeout(async function() {
