@@ -1075,7 +1075,7 @@ async function assembleLongFormVideo(sections, audioPaths, outputPath) {
       ' -y "' + segPath + '"';
 
     console.log('[LongForm] Assembling section ' + (si + 1) + '/' + sections.length + ' (' + segDuration.toFixed(1) + 's)...');
-    execSync(cmd, { stdio: 'pipe', timeout: 300000 });
+    execSync(cmd, { stdio: 'ignore', timeout: 300000 });
     segmentFiles.push(segPath);
 
     // Cleanup temp
@@ -1093,7 +1093,7 @@ async function assembleLongFormVideo(sections, audioPaths, outputPath) {
     ' -y "' + outputPath + '"';
 
   console.log('[LongForm] Concatenating ' + segmentFiles.length + ' sections...');
-  execSync(concatCmd, { stdio: 'pipe', timeout: 120000 });
+  execSync(concatCmd, { stdio: 'ignore', timeout: 180000 });
 
   // Cleanup
   segmentFiles.forEach(function(f) { try { fs.unlinkSync(f); } catch(e) {} });
@@ -1162,7 +1162,7 @@ async function createAndPublishLongForm(topicOverride) {
         ' -y "' + longSubbedPath + '"';
       try {
         console.log('[LongForm] Burning subtitles...');
-        execSync(longSubCmd, { stdio: 'pipe', timeout: 300000 });
+        execSync(longSubCmd, { stdio: 'ignore', timeout: 300000 });
         fs.unlinkSync(videoPath);
         fs.renameSync(longSubbedPath, videoPath);
         console.log('[LongForm] Subtitles burned in');
